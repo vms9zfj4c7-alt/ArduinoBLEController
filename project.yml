@@ -1,0 +1,41 @@
+name: ArduinoBLEController
+options:
+  bundleIdPrefix: com.arduinoble
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  ArduinoBLEController:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: iOS_App
+        excludes:
+          - "**/*.plist"
+    dependencies:
+      - sdk: CoreBluetooth.framework
+      - sdk: GameController.framework
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: Arduino BLE
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSBluetoothAlwaysUsageDescription: "Cette application utilise le Bluetooth Low Energy pour détecter et piloter votre carte Arduino."
+        NSBluetoothPeripheralUsageDescription: "Cette application communique en Bluetooth avec votre carte Arduino."
+        GCSupportedGameControllers:
+          - ProfileName: ExtendedGamepad
+        GCSupportsControllerUserInteraction: true

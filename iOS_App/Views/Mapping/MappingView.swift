@@ -1,0 +1,366 @@
+import SwiftUI
+
+/// Page de configuration permettant d'assigner chaque bouton style manette et d'adapter la carte Arduino.
+struct MappingView: View {
+    @ObservedObject var viewModel: MappingViewModel
+
+    private static let slotGroups: [(title: String, slots: [GamepadSlot])] = [
+        ("Croix directionnelle", [.dpadUp, .dpadDown, .dpadLeft, .dpadRight]),
+        ("Boutons d'action", [.buttonA, .buttonB, .buttonX, .buttonY]),
+        ("Gâchettes & Système", [.shoulderL1, .shoulderR1, .select, .start]),
+        ("Curseurs analogiques", [.sliderLeft, .sliderRight])
+    ]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                boardAdaptationSection
+                ps4ControllerSection
+                presetsSection
+                interactiveGamepadSection
+
+                ForEach(Self.slotGroups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.slots) { slot in
+                            let assignment = viewModel.assignment(for: slot)
+                            Button {
+                                viewModel.selectedSlotForEditing = slot
+                            } label: {
+                                AssignmentRowView(slot: slot, assignment: assignment)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Assigner Manette")
+            .sheet(item: $viewModel.selectedSlotForEditing) { slot in
+                ButtonAssignmentEditorView(
+                    assignment: viewModel.assignment(for: slot),
+                    boardCapability: viewModel.boardCapability,
+                    isConnected: viewModel.isConnected,
+                    onSave: { updated in
+                        viewModel.saveAssignment(updated)
+                    },
+                    onTest: { candidate, isActive in
+                        viewModel.testAssignment(candidate, isActive: isActive)
+                    }
+                )
+            }
+        }
+    }
+
+    // MARK: - Sections
+
+    private var boardAdaptationSection: some View {
+        Section {
+            Picker(
+                "Profil Arduino",
+                selection: Binding(
+                    get: { viewModel.selectedBoardPreference },
+                    set: { viewModel.selectBoardPreference($0) }
+                )
+            ) {
+                ForEach(ArduinoBoardType.allCases) { board in
+                    Text(board.displayName).tag(board)
+                }
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Carte active")
+                        .font(.subheadline.weight(.medium))
+                    Text("\(viewModel.boardCapability.boardType.displayName) • \(viewModel.boardCapability.availablePins.count) broches")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(viewModel.boardCapability.isAutoDetected ? "Auto" : "Manuel")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.15))
+                    .foregroundStyle(Color.accentColor)
+                    .clipShape(Capsule())
+            }
+
+            Button {
+                viewModel.adaptPresetToCurrentBoard()
+            } label: {
+                Label("Réadapter automatiquement les broches", systemImage: "wand.and.stars")
+            }
+        } header: {
+            Text("Adaptation à la carte Arduino")
+        } footer: {
+            Text("En mode Auto-détection, l'application interroge l'Arduino à la connexion et ajuste les broches disponibles (Uno + HM-10, Uno R4 WiFi, Nano 33 BLE, ESP32, Mega).")
+        }
+    }
+
+    private var presetsSection: some View {
+        Section("Modèles prêts à l'emploi") {
+            ForEach(BuiltInPresetKind.allCases) { preset in
+                Button {
+                    viewModel.applyPreset(preset)
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(preset.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(preset.subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if viewModel.activePreset == preset {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var ps4ControllerSection: some View {
+        Section {
+            HStack(spacing: 10) {
+                Image(systemName: viewModel.isPS4Connected ? "gamecontroller.fill" : "gamecontroller")
+                    .foregroundStyle(viewModel.isPS4Connected ? Color.green : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(viewModel.isPS4Connected ? viewModel.ps4ControllerName : "Aucune manette PS4 connectée")
+                        .font(.subheadline.weight(.medium))
+                    if let battery = viewModel.ps4BatteryPercentage {
+                        Text("Batterie : \(battery)%")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Appairez la DualShock 4 dans Réglages > Bluetooth")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button("Actualiser") {
+                    viewModel.refreshPS4Controllers()
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            }
+
+            Toggle(
+                "Stick gauche -> Croix directionnelle",
+                isOn: Binding(
+                    get: { viewModel.ps4LeftStickAsDPad },
+                    set: { newVal in
+                        viewModel.updatePS4Options(
+                            leftStickAsDPad: newVal,
+                            rightStickAsSliders: viewModel.ps4RightStickAsSliders
+                        )
+                    }
+                )
+            )
+
+            Toggle(
+                "Stick droit -> Curseurs L2 / R2",
+                isOn: Binding(
+                    get: { viewModel.ps4RightStickAsSliders },
+                    set: { newVal in
+                        viewModel.updatePS4Options(
+                            leftStickAsDPad: viewModel.ps4LeftStickAsDPad,
+                            rightStickAsSliders: newVal
+                        )
+                    }
+                )
+            )
+        } header: {
+            Text("Manette PS4 / DualShock 4 Bluetooth")
+        } footer: {
+            Text("Les touches de la manette PS4 (Croix, Rond, Carré, Triangle, L1/R1, L2/R2, Share, Options et croix directionnelle) utilisent directement les assignations ci-dessous.")
+        }
+    }
+
+    private var interactiveGamepadSection: some View {
+        Section {
+            VStack(spacing: 12) {
+                // Rangée haute : gâchettes et curseurs
+                HStack(spacing: 6) {
+                    miniSlotPill(.shoulderL1)
+                    miniSlotPill(.sliderLeft)
+                    miniSlotPill(.select)
+                    miniSlotPill(.start)
+                    miniSlotPill(.sliderRight)
+                    miniSlotPill(.shoulderR1)
+                }
+
+                HStack(alignment: .center, spacing: 14) {
+                    // Mini D-Pad visuel
+                    VStack(spacing: 4) {
+                        miniSquareButton(.dpadUp)
+                        HStack(spacing: 4) {
+                            miniSquareButton(.dpadLeft)
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(.tertiarySystemFill))
+                                .frame(width: 34, height: 34)
+                            miniSquareButton(.dpadRight)
+                        }
+                        miniSquareButton(.dpadDown)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    // Mini losange A/B/X/Y
+                    VStack(spacing: 4) {
+                        miniCircleButton(.buttonY)
+                        HStack(spacing: 24) {
+                            miniCircleButton(.buttonX)
+                            miniCircleButton(.buttonB)
+                        }
+                        miniCircleButton(.buttonA)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+        } header: {
+            Text("Manette interactive (touchez un bouton à configurer)")
+        }
+    }
+
+    private func miniSlotPill(_ slot: GamepadSlot) -> some View {
+        let config = viewModel.assignment(for: slot)
+        let color = config.colorToken.color
+        return Button {
+            viewModel.selectedSlotForEditing = slot
+        } label: {
+            VStack(spacing: 2) {
+                Text(slot.shortCode)
+                    .font(.system(size: 10, weight: .bold))
+                Text(config.label)
+                    .font(.system(size: 8, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(color.opacity(0.14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(color.opacity(0.45), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func miniSquareButton(_ slot: GamepadSlot) -> some View {
+        let config = viewModel.assignment(for: slot)
+        let color = config.colorToken.color
+        return Button {
+            viewModel.selectedSlotForEditing = slot
+        } label: {
+            VStack(spacing: 1) {
+                Image(systemName: config.symbolName)
+                    .font(.system(size: 12, weight: .bold))
+                Text(config.summaryPinBadge)
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(color)
+            .frame(width: 42, height: 42)
+            .background(color.opacity(0.15))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(color.opacity(0.5), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func miniCircleButton(_ slot: GamepadSlot) -> some View {
+        let config = viewModel.assignment(for: slot)
+        let color = config.colorToken.color
+        return Button {
+            viewModel.selectedSlotForEditing = slot
+        } label: {
+            VStack(spacing: 1) {
+                Text(slot.shortCode)
+                    .font(.system(size: 11, weight: .black))
+                Text(config.summaryPinBadge)
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(color)
+            .frame(width: 42, height: 42)
+            .background(color.opacity(0.15))
+            .overlay(
+                Circle()
+                    .strokeBorder(color.opacity(0.55), lineWidth: 1.2)
+            )
+            .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct AssignmentRowView: View {
+    let slot: GamepadSlot
+    let assignment: ButtonAssignment
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(assignment.colorToken.color.opacity(0.16))
+                    .frame(width: 40, height: 40)
+                Image(systemName: assignment.symbolName)
+                    .foregroundStyle(assignment.colorToken.color)
+                    .font(.body.weight(.semibold))
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(slot.slotDisplayName)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Text("•")
+                        .foregroundStyle(.secondary)
+                    Text(assignment.label)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
+
+                Text(assignment.summaryDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(slot.ps4Hint)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private extension ButtonAssignment {
+    var summaryPinBadge: String {
+        switch actionType {
+        case .pinDigital, .pinPWM, .pinServo:
+            return "P\(primaryPin)"
+        case .multiPin:
+            return "Multi"
+        case .customCommand:
+            return "Txt"
+        case .emergencyStop:
+            return "STOP"
+        }
+    }
+}
