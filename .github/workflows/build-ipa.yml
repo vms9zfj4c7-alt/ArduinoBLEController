@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-ipa:
     runs-on: macos-latest
@@ -56,3 +59,18 @@ jobs:
           name: ArduinoBLEController-unsigned-ipa
           path: ArduinoBLEController-unsigned.ipa
           if-no-files-found: error
+
+      - name: Publish IPA to Latest Release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if command -v gh >/dev/null 2>&1; then
+            gh release delete latest --cleanup-tag -y >/dev/null 2>&1 || true
+            gh release create latest ArduinoBLEController-unsigned.ipa \
+              --target "$GITHUB_SHA" \
+              --title "Arduino BLE Controller - Dernier build IPA" \
+              --notes "IPA non signe compile automatiquement pour iOS 16+ (commit ${GITHUB_SHA:0:7})."
+          else
+            echo "gh CLI indisponible sur le runner."
+          fi
