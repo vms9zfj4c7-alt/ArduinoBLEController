@@ -24,6 +24,7 @@ struct MainTabView: View {
 
             ControllerView(
                 viewModel: controllerViewModel,
+                telemetryStore: controllerViewModel.telemetryStore,
                 onOpenScan: { selectedTab = .scan },
                 onOpenMapping: { selectedTab = .mapping }
             )

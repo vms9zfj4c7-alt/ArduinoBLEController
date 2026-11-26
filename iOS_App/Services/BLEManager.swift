@@ -2,6 +2,19 @@ import Foundation
 import CoreBluetooth
 import Combine
 
+/// Magasin isolé pour la télémétrie et le RSSI : évite de redessiner toute la manette à chaque trame.
+final class BLETelemetryStore: ObservableObject {
+    @Published var latestTemperature: Double?
+    @Published var isTemperatureSimulated: Bool = false
+    @Published var connectedRSSI: Int?
+
+    func reset() {
+        if latestTemperature != nil { latestTemperature = nil }
+        if isTemperatureSimulated { isTemperatureSimulated = false }
+        if connectedRSSI != nil { connectedRSSI = nil }
+    }
+}
+
 /// Gestionnaire Bluetooth Low Energy basé sur CoreBluetooth.
 /// Découvre automatiquement les services/caractéristiques et s'adapte à la carte Arduino connectée.
 final class BLEManager: NSObject, ObservableObject {
@@ -49,14 +62,12 @@ final class BLEManager: NSObject, ObservableObject {
     @Published private(set) var activeProfileDescription: String = "Aucun profil"
     @Published private(set) var detectedBoardCapability: ArduinoBoardCapability
     @Published private(set) var manualBoardOverride: ArduinoBoardType = .auto
-    @Published private(set) var latestTemperature: Double?
-    @Published private(set) var isTemperatureSimulated: Bool = false
-    @Published private(set) var connectedRSSI: Int?
     @Published private(set) var lastConnectedDeviceName: String?
     @Published var lastErrorMessage: String?
 
-    /// Journal isolé pour éviter les re-rendus de la manette à chaque paquet TX/RX
+    /// Journal et télémétrie isolés pour éviter les re-rendus de la manette à chaque paquet TX/RX
     let logStore = BLELogStore(maxEntries: 200)
+    let telemetryStore = BLETelemetryStore()
 
     private let lastDeviceIDKey = "arduino_ble_last_device_id_v1"
     private let lastDeviceNameKey = "arduino_ble_last_device_name_v1"
@@ -80,7 +91,11 @@ final class BLEManager: NSObject, ObservableObject {
     private var usedTargetedDiscovery: Bool = false
     private var didAttemptFullFallbackDiscovery: Bool = false
     private var didDiscoverFullCharScan: Bool = false
-    private var rxLineBuffer: String = ""
+    private var rxDataBuffer: Data = {
+        var data = Data()
+        data.reserveCapacity(128)
+        return data
+    }()
 
     private var scanTimeoutTimer: Timer?
     private var scanRefreshTimer: Timer?
@@ -418,10 +433,8 @@ final class BLEManager: NSObject, ObservableObject {
         usedTargetedDiscovery = false
         didAttemptFullFallbackDiscovery = false
         didDiscoverFullCharScan = false
-        rxLineBuffer = ""
-        connectedRSSI = nil
-        latestTemperature = nil
-        isTemperatureSimulated = false
+        rxDataBuffer.removeAll(keepingCapacity: true)
+        telemetryStore.reset()
         activeProfileDescription = "Aucun profil"
         lastAutoDetectedCapability = nil
     }
@@ -594,24 +607,31 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     private func handleIncomingData(_ data: Data) {
-        let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-        if text.contains("\r") {
-            rxLineBuffer.append(text.replacingOccurrences(of: "\r", with: ""))
-        } else {
-            rxLineBuffer.append(text)
-        }
+        rxDataBuffer.append(data)
 
-        if rxLineBuffer.count > 512 && !rxLineBuffer.contains("\n") {
-            rxLineBuffer.removeAll(keepingCapacity: true)
+        if rxDataBuffer.count > 512 && !rxDataBuffer.contains(0x0A) {
+            rxDataBuffer.removeAll(keepingCapacity: true)
             return
         }
 
-        while let newlineIndex = rxLineBuffer.firstIndex(of: "\n") {
-            let line = String(rxLineBuffer[..<newlineIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-            rxLineBuffer.removeSubrange(...newlineIndex)
-            if !line.isEmpty {
-                processReceivedLine(line)
+        var searchStart = rxDataBuffer.startIndex
+        while let newlineIdx = rxDataBuffer[searchStart...].firstIndex(of: 0x0A) {
+            var lineEnd = newlineIdx
+            if lineEnd > searchStart && rxDataBuffer[rxDataBuffer.index(before: lineEnd)] == 0x0D {
+                lineEnd = rxDataBuffer.index(before: lineEnd)
             }
+            if searchStart < lineEnd {
+                let slice = rxDataBuffer[searchStart ..< lineEnd]
+                let line = String(decoding: slice, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !line.isEmpty {
+                    processReceivedLine(line)
+                }
+            }
+            searchStart = rxDataBuffer.index(after: newlineIdx)
+        }
+
+        if searchStart > rxDataBuffer.startIndex {
+            rxDataBuffer.removeSubrange(..<searchStart)
         }
     }
 
@@ -644,22 +664,21 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     private func parseTelemetryLine(_ line: String) {
-        let body = String(line.dropFirst("DATA:".count))
-        let parts = body.split(separator: ";")
-        for part in parts {
+        let body = line.dropFirst("DATA:".count)
+        for part in body.split(separator: ";") {
             let kv = part.split(separator: "=", maxSplits: 1)
             guard kv.count == 2 else { continue }
-            let key = kv[0].trimmingCharacters(in: .whitespaces).uppercased()
+            let key = kv[0].trimmingCharacters(in: .whitespaces)
             let val = kv[1].trimmingCharacters(in: .whitespaces)
 
-            if (key == "TEMP" || key == "T"), let temp = Double(val) {
-                if latestTemperature != temp {
-                    latestTemperature = temp
+            if (key == "T" || key.caseInsensitiveCompare("TEMP") == .orderedSame), let temp = Double(val) {
+                if telemetryStore.latestTemperature != temp {
+                    telemetryStore.latestTemperature = temp
                 }
-            } else if key == "SIM" || key == "S" {
-                let sim = (val == "1" || val.lowercased() == "true")
-                if isTemperatureSimulated != sim {
-                    isTemperatureSimulated = sim
+            } else if key == "S" || key.caseInsensitiveCompare("SIM") == .orderedSame {
+                let sim = (val == "1" || val.caseInsensitiveCompare("true") == .orderedSame)
+                if telemetryStore.isTemperatureSimulated != sim {
+                    telemetryStore.isTemperatureSimulated = sim
                 }
             }
         }
@@ -951,8 +970,8 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
         guard error == nil else { return }
         let val = RSSI.intValue
-        if val != 127 && connectedRSSI != val {
-            connectedRSSI = val
+        if val != 127 && telemetryStore.connectedRSSI != val {
+            telemetryStore.connectedRSSI = val
         }
     }
 

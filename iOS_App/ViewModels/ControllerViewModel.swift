@@ -8,9 +8,6 @@ final class ControllerViewModel: ObservableObject {
     @Published private(set) var connectionState: BLEManager.ConnectionState = .disconnected
     @Published private(set) var boardCapability: ArduinoBoardCapability
     @Published private(set) var activeProfileDescription: String = "Aucun profil"
-    @Published private(set) var latestTemperature: Double?
-    @Published private(set) var isTemperatureSimulated: Bool = false
-    @Published private(set) var connectedRSSI: Int?
     @Published private(set) var lastConnectedDeviceName: String?
     @Published var errorMessage: String?
 
@@ -25,6 +22,7 @@ final class ControllerViewModel: ObservableObject {
     @Published private(set) var toggledStates: [GamepadSlot: Bool] = [:]
 
     var logStore: BLELogStore { bleManager.logStore }
+    var telemetryStore: BLETelemetryStore { bleManager.telemetryStore }
     let externalSliderUpdates = PassthroughSubject<(slot: GamepadSlot, value: Double), Never>()
 
     private let bleManager: BLEManager
@@ -284,18 +282,6 @@ final class ControllerViewModel: ObservableObject {
         bleManager.$activeProfileDescription
             .removeDuplicates()
             .assign(to: &$activeProfileDescription)
-
-        bleManager.$latestTemperature
-            .removeDuplicates()
-            .assign(to: &$latestTemperature)
-
-        bleManager.$isTemperatureSimulated
-            .removeDuplicates()
-            .assign(to: &$isTemperatureSimulated)
-
-        bleManager.$connectedRSSI
-            .removeDuplicates()
-            .assign(to: &$connectedRSSI)
 
         bleManager.$lastConnectedDeviceName
             .removeDuplicates()

@@ -4,6 +4,7 @@ import Combine
 /// Écran principal de contrôle de l'Arduino façon manette de jeu, adaptatif portrait / paysage.
 struct ControllerView: View {
     @ObservedObject var viewModel: ControllerViewModel
+    @ObservedObject var telemetryStore: BLETelemetryStore
     let onOpenScan: () -> Void
     let onOpenMapping: () -> Void
 
@@ -102,7 +103,7 @@ struct ControllerView: View {
 
                 Spacer()
 
-                if let temp = viewModel.latestTemperature {
+                if let temp = telemetryStore.latestTemperature {
                     Button {
                         viewModel.requestTelemetry()
                     } label: {
@@ -110,7 +111,7 @@ struct ControllerView: View {
                             Image(systemName: "thermometer")
                             Text(String(format: "%.1f °C", temp))
                                 .monospacedDigit()
-                            if viewModel.isTemperatureSimulated {
+                            if telemetryStore.isTemperatureSimulated {
                                 Text("(démo)")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
@@ -126,7 +127,7 @@ struct ControllerView: View {
                     .buttonStyle(.plain)
                 }
 
-                if let rssi = viewModel.connectedRSSI {
+                if let rssi = telemetryStore.connectedRSSI {
                     Text("\(rssi) dBm")
                         .font(.caption2.monospacedDigit().weight(.medium))
                         .foregroundStyle(.secondary)
