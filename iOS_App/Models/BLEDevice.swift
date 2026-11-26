@@ -10,7 +10,7 @@ struct BLEDevice: Identifiable, Equatable {
     let manufacturerID: UInt16?
     let manufacturerName: String?
     let isConnectable: Bool
-    let lastSeen: Date
+    let lastSeen: TimeInterval
 
     let hasResolvedName: Bool
     let displayName: String
@@ -30,17 +30,12 @@ struct BLEDevice: Identifiable, Equatable {
         manufacturerData: Data? = nil,
         manufacturerID: UInt16? = nil,
         isConnectable: Bool = true,
-        lastSeen: Date
+        lastSeen: TimeInterval = CFAbsoluteTimeGetCurrent()
     ) {
         let trimmedName = rawName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanName = (trimmedName?.isEmpty == false) ? trimmedName : nil
 
-        let resolvedMfrID: UInt16?
-        if let mfrData = manufacturerData, mfrData.count >= 2 {
-            resolvedMfrID = UInt16(mfrData[mfrData.startIndex]) | (UInt16(mfrData[mfrData.startIndex + 1]) << 8)
-        } else {
-            resolvedMfrID = manufacturerID
-        }
+        let resolvedMfrID = Self.parseManufacturerID(from: manufacturerData) ?? manufacturerID
 
         let mfrName = resolvedMfrID.flatMap { Self.manufacturerDisplayName(for: $0) }
 
@@ -79,6 +74,23 @@ struct BLEDevice: Identifiable, Equatable {
             manufacturerName: mfrName,
             isConnectable: isConnectable
         )
+    }
+
+    static func parseManufacturerID(from manufacturerData: Data?) -> UInt16? {
+        guard let mfrData = manufacturerData, mfrData.count >= 2 else { return nil }
+        return UInt16(mfrData[mfrData.startIndex]) | (UInt16(mfrData[mfrData.startIndex + 1]) << 8)
+    }
+
+    static func == (lhs: BLEDevice, rhs: BLEDevice) -> Bool {
+        lhs.id == rhs.id
+            && lhs.rssi == rhs.rssi
+            && lhs.rawName == rhs.rawName
+            && lhs.manufacturerID == rhs.manufacturerID
+            && lhs.isConnectable == rhs.isConnectable
+            && lhs.advertisedServiceUUIDs == rhs.advertisedServiceUUIDs
+            && lhs.displayName == rhs.displayName
+            && lhs.isLikelyArduino == rhs.isLikelyArduino
+            && lhs.detectedModuleHint == rhs.detectedModuleHint
     }
 
     var signalBars: Int {

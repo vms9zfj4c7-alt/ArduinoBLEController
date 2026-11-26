@@ -3,12 +3,12 @@ import SwiftUI
 /// Console de logs BLE pliable (émissions, réceptions et envoi de commandes manuelles).
 struct LogConsoleView: View {
     @ObservedObject var logStore: BLELogStore
-    @Binding var rawCommandText: String
     let isConnected: Bool
-    let onSendRawCommand: () -> Void
+    let onSendRawCommand: (String) -> Void
     let onClearLogs: () -> Void
 
     @State private var isExpanded: Bool = false
+    @State private var rawCommandText: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -88,11 +88,9 @@ struct LogConsoleView: View {
                     }
                     .frame(height: 150)
                     .background(Color(.systemBackground).opacity(0.6))
-                    .onChange(of: logStore.entries.count) { _ in
-                        if let lastID = logStore.entries.last?.id {
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                proxy.scrollTo(lastID, anchor: .bottom)
-                            }
+                    .onChange(of: logStore.entries.last?.id) { lastID in
+                        if let lastID {
+                            proxy.scrollTo(lastID, anchor: .bottom)
                         }
                     }
                 }
@@ -106,11 +104,11 @@ struct LogConsoleView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .onSubmit {
-                            if isConnected { onSendRawCommand() }
+                            submitRawCommand()
                         }
 
                     Button("Envoyer") {
-                        onSendRawCommand()
+                        submitRawCommand()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -133,6 +131,14 @@ struct LogConsoleView: View {
         .onDisappear {
             logStore.setExpanded(false)
         }
+    }
+
+    private func submitRawCommand() {
+        guard isConnected else { return }
+        let trimmed = rawCommandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        rawCommandText = ""
+        onSendRawCommand(trimmed)
     }
 
     private func toggleExpanded() {

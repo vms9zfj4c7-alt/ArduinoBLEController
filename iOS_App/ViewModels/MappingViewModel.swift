@@ -40,44 +40,44 @@ final class MappingViewModel: ObservableObject {
         bleManager.setManualBoardOverride(storageService.selectedBoardPreference)
 
         bleManager.$detectedBoardCapability
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$boardCapability)
 
         bleManager.$connectionState
-            .receive(on: DispatchQueue.main)
             .map { $0.isConnected }
+            .removeDuplicates()
             .assign(to: &$isConnected)
 
         storageService.$assignments
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$assignments)
 
         storageService.$selectedBoardPreference
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$selectedBoardPreference)
 
         storageService.$activePreset
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$activePreset)
 
         storageService.$ps4LeftStickAsDPad
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$ps4LeftStickAsDPad)
 
         storageService.$ps4RightStickAsSliders
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$ps4RightStickAsSliders)
 
         ps4Manager.$isConnected
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$isPS4Connected)
 
         ps4Manager.$controllerName
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$ps4ControllerName)
 
         ps4Manager.$batteryPercentage
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$ps4BatteryPercentage)
     }
 

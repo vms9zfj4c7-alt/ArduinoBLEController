@@ -23,10 +23,19 @@ enum BLEProtocolConstants {
         nordicServiceUUID
     ]
 
+    /// Services Bluetooth SIG standards (GAP/GATT/Device Info/Battery) ignorés en priorité lors du handshake rapide
+    static let systemMetadataServiceUUIDs: Set<CBUUID> = [
+        CBUUID(string: "1800"),
+        CBUUID(string: "1801"),
+        CBUUID(string: "180A"),
+        CBUUID(string: "180F")
+    ]
+
     // MARK: - Formatage des commandes compactes (<= 20 octets)
     static let infoQueryCommand = "I?\n"
     static let telemetryQueryCommand = "T?\n"
     static let emergencyStopCommand = "X\n"
+    static let emergencyStopPacket = BLEPreparedCommand.make(emergencyStopCommand, coalesceKey: "STOP")
 
     static func digitalCommand(pin: Int, isOn: Bool) -> String {
         "D:\(pin):\(isOn ? 1 : 0)\n"
@@ -44,5 +53,22 @@ enum BLEProtocolConstants {
 
     static func readPinCommand(pin: Int) -> String {
         "R:\(pin)\n"
+    }
+}
+
+/// Paquet BLE pré-encodé en UTF-8 pour zéro allocation lors des appuis et glissements rapides.
+struct BLEPreparedCommand: Equatable {
+    let payload: Data
+    let logText: String
+    let coalesceKey: String?
+
+    static func make(_ rawCommand: String, coalesceKey: String? = nil) -> BLEPreparedCommand {
+        let cleaned = rawCommand.trimmingCharacters(in: .newlines)
+        let normalized = cleaned + "\n"
+        return BLEPreparedCommand(
+            payload: Data(normalized.utf8),
+            logText: cleaned,
+            coalesceKey: coalesceKey
+        )
     }
 }

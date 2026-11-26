@@ -121,20 +121,21 @@ static const char* TX_CHAR_UUID = "beb5483f-36e1-4688-b7f5-ea07361b26a8";
   #include <BLEServer.h>
   #include <BLEUtils.h>
   #include <BLE2902.h>
-  #include <math.h>
 #elif defined(BLE_MODE_ARDUINOBLE)
   #include <ArduinoBLE.h>
   #include <Servo.h>
-  #include <math.h>
 #else
   #include <Servo.h>
-  #include <math.h>
   #if defined(__AVR_ATmega2560__) || defined(__AVR_ATmega1280__) || defined(__AVR_ATmega32U4__)
     #define HM10_USE_SERIAL1
   #else
     #include <SoftwareSerial.h>
     SoftwareSerial hm10Serial(HM10_RX_PIN, HM10_TX_PIN);
   #endif
+#endif
+
+#if TEMP_SENSOR_TYPE == 3
+  #include <math.h>
 #endif
 
 // ============================================================================
@@ -180,7 +181,36 @@ volatile bool bleClientConnected = false;
 volatile bool pendingDisconnectCleanup = false;
 bool          wasConnected = false;
 unsigned long lastTelemetryMs = 0;
-float         demoTempBase = 22.8f;
+
+// Formateurs entiers sans snprintf pour réduire la taille Flash sur AVR et accélérer la télémétrie
+uint8_t appendStr(char* dst, uint8_t pos, uint8_t maxLen, const char* src) {
+  while (*src != '\0' && pos < maxLen - 1) {
+    dst[pos++] = *src++;
+  }
+  dst[pos] = '\0';
+  return pos;
+}
+
+uint8_t appendInt(char* dst, uint8_t pos, uint8_t maxLen, int val) {
+  char tmp[8];
+  uint8_t len = 0;
+  unsigned int u;
+  if (val < 0) {
+    if (pos < maxLen - 1) dst[pos++] = '-';
+    u = (unsigned int)(-(val + 1)) + 1U;
+  } else {
+    u = (unsigned int)val;
+  }
+  do {
+    tmp[len++] = (char)('0' + (u % 10U));
+    u /= 10U;
+  } while (u > 0U && len < sizeof(tmp));
+  while (len > 0 && pos < maxLen - 1) {
+    dst[pos++] = tmp[--len];
+  }
+  dst[pos] = '\0';
+  return pos;
+}
 
 // Prototypes
 void processCommand(char* rawCmd);
@@ -231,7 +261,7 @@ volatile bool      espNeedStartAdvertising = false;
 unsigned long      espAdvScheduleMs = 0;
 
 // Tampon circulaire puissance de 2 avec barrière mémoire pour transfert inter-cœurs sûr
-#define BLE_RING_SIZE 256
+#define BLE_RING_SIZE 512
 #define BLE_RING_MASK (BLE_RING_SIZE - 1)
 volatile uint8_t bleRing[BLE_RING_SIZE];
 volatile uint16_t bleRingHead = 0;
@@ -431,8 +461,12 @@ void sendBleLine(const char* line) {
     if (offset < rawLen || needsNewline) {
       #if defined(BLE_MODE_ARDUINOBLE)
         BLE.poll();
+        delay(4);
+      #elif defined(BLE_MODE_ESP32)
+        delay(4);
+      #else
+        delay(6);
       #endif
-      delay(10);
     }
   }
 
@@ -470,7 +504,12 @@ void sendBleLine_P(const char* progmemStr) {
         writeBlePacket((const uint8_t*)packet, chunkLen);
       }
       if (!ended) {
-        delay(10);
+        #if defined(BLE_MODE_ARDUINOBLE)
+          BLE.poll();
+          delay(4);
+        #else
+          delay(6);
+        #endif
       }
     }
     if (lastChar != '\n') {
@@ -492,7 +531,10 @@ void sendBleLineF(const __FlashStringHelper* msg) {
 
 void sendPinReservedError(int pin) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "ERR:PIN_%d_RESERVED", pin);
+  uint8_t p = 0;
+  p = appendStr(buf, p, sizeof(buf), "ERR:PIN_");
+  p = appendInt(buf, p, sizeof(buf), pin);
+  appendStr(buf, p, sizeof(buf), "_RESERVED");
   sendBleLine(buf);
 }
 
@@ -705,7 +747,11 @@ void readDigitalPin(int pin) {
   }
   int val = digitalRead(pin);
   char buf[28];
-  snprintf(buf, sizeof(buf), "DATA:PIN%d=%d", pin, val);
+  uint8_t p = 0;
+  p = appendStr(buf, p, sizeof(buf), "DATA:PIN");
+  p = appendInt(buf, p, sizeof(buf), pin);
+  if (p < sizeof(buf) - 1) buf[p++] = '=';
+  appendInt(buf, p, sizeof(buf), val);
   sendBleLine(buf);
 }
 
@@ -742,31 +788,26 @@ int readAveragedAdc(int pin) {
 }
 #endif
 
-float readTemperatureCelsius(bool& isSimulated) {
+int16_t readTemperatureTenths(bool& isSimulated) {
   #if TEMP_SENSOR_TYPE == 1
-    // LM35 : 10 mV / °C (référence 5.0V sur Uno/Mega, 3.3V sur ESP32/Nano33)
+    // LM35 : 10 mV / °C (= 1 mV par 0,1 °C), calcul fixe sans virgule flottante
     isSimulated = false;
+    long adc = (long)readAveragedAdc(TEMP_ANALOG_PIN);
     #if defined(BLE_MODE_ESP32) || defined(ARDUINO_NANO33BLE) || defined(ARDUINO_SAMD_NANO_33_IOT)
-      float vRef = 3.3f;
-      float adcMax = 4095.0f;
+      return (int16_t)((adc * 3300L + 2047L) / 4095L);
     #else
-      float vRef = 5.0f;
-      float adcMax = 1023.0f;
+      return (int16_t)((adc * 5000L + 511L) / 1023L);
     #endif
-    float voltage = (readAveragedAdc(TEMP_ANALOG_PIN) * vRef) / adcMax;
-    return voltage * 100.0f;
   #elif TEMP_SENSOR_TYPE == 2
-    // TMP36 : (V - 0.5V) * 100
+    // TMP36 : (mV - 500 mV) = dixièmes de °C, calcul fixe sans virgule flottante
     isSimulated = false;
+    long adc = (long)readAveragedAdc(TEMP_ANALOG_PIN);
     #if defined(BLE_MODE_ESP32) || defined(ARDUINO_NANO33BLE) || defined(ARDUINO_SAMD_NANO_33_IOT)
-      float vRef = 3.3f;
-      float adcMax = 4095.0f;
+      long mv = (adc * 3300L + 2047L) / 4095L;
     #else
-      float vRef = 5.0f;
-      float adcMax = 1023.0f;
+      long mv = (adc * 5000L + 511L) / 1023L;
     #endif
-    float voltage = (readAveragedAdc(TEMP_ANALOG_PIN) * vRef) / adcMax;
-    return (voltage - 0.5f) * 100.0f;
+    return (int16_t)(mv - 500L);
   #elif TEMP_SENSOR_TYPE == 3
     // Thermistance NTC 10k (Beta = 3950) en pont diviseur avec résistance 10k
     isSimulated = false;
@@ -779,29 +820,36 @@ float readTemperatureCelsius(bool& isSimulated) {
     #endif
     float rTherm = 10000.0f * (adcMax / (float)raw - 1.0f);
     float steinhart = log(rTherm / 10000.0f) / 3950.0f + (1.0f / (25.0f + 273.15f));
-    return (1.0f / steinhart) - 273.15f;
+    float tempC = (1.0f / steinhart) - 273.15f;
+    return (int16_t)(tempC >= 0.0f ? (tempC * 10.0f + 0.5f) : (tempC * 10.0f - 0.5f));
   #else
-    // Mode démonstration réaliste lorsqu'aucun capteur physique n'est branché
+    // Mode démonstration entier (zéro calcul sinf / float, oscille doucement entre 22.2 et 23.4 °C)
     isSimulated = true;
-    float oscillation = 0.6f * sinf((float)millis() / 6000.0f);
-    return demoTempBase + oscillation;
+    uint32_t phaseMs = millis() % 24000UL;
+    int16_t delta = (phaseMs < 12000UL)
+      ? (int16_t)((phaseMs / 1000UL) - 6)
+      : (int16_t)(6 - ((phaseMs - 12000UL) / 1000UL));
+    return (int16_t)(228 + delta);
   #endif
 }
 
 void sendTelemetry() {
   bool isSim = true;
-  float temp = readTemperatureCelsius(isSim);
-  int tempTenths = (int)roundf(temp * 10.0f);
-  int absTenths = abs(tempTenths);
-  const char* sign = (tempTenths < 0) ? "-" : "";
+  int16_t tempTenths = readTemperatureTenths(isSim);
+  int absTenths = (tempTenths < 0) ? -(int)tempTenths : (int)tempTenths;
 
   // Trame compacte <= 20 octets (envoi BLE unique sans découpage ni délai)
   char msg[24];
-  snprintf(
-    msg, sizeof(msg),
-    "DATA:T=%s%d.%d;S=%d",
-    sign, absTenths / 10, absTenths % 10, isSim ? 1 : 0
-  );
+  uint8_t p = 0;
+  p = appendStr(msg, p, sizeof(msg), "DATA:T=");
+  if (tempTenths < 0 && absTenths > 0 && p < sizeof(msg) - 1) {
+    msg[p++] = '-';
+  }
+  p = appendInt(msg, p, sizeof(msg), absTenths / 10);
+  if (p < sizeof(msg) - 1) msg[p++] = '.';
+  p = appendInt(msg, p, sizeof(msg), absTenths % 10);
+  p = appendStr(msg, p, sizeof(msg), ";S=");
+  appendInt(msg, p, sizeof(msg), isSim ? 1 : 0);
   sendBleLine(msg);
 }
 
@@ -860,7 +908,8 @@ void handleCustomCommand(const char* cmd) {
   #endif
 
   char ack[RX_BUFFER_SIZE + 8];
-  snprintf(ack, sizeof(ack), "ACK:%s", cmd);
+  uint8_t p = appendStr(ack, 0, sizeof(ack), "ACK:");
+  appendStr(ack, p, sizeof(ack), cmd);
   sendBleLine(ack);
 }
 
@@ -936,13 +985,6 @@ void processCommand(char* rawCmd) {
 // ============================================================================
 
 void setup() {
-  Serial.begin(115200);
-  // Courte attente pour USB CDC natif (Uno R4, Nano 33 BLE), sans bloquer si non branché
-  unsigned long waitStart = millis();
-  while (!Serial && (millis() - waitStart < 1200)) {
-    delay(10);
-  }
-
   for (int i = 0; i <= MAX_PIN_INDEX; i++) {
     pinSlotMap[i] = -1;
   }
@@ -960,7 +1002,17 @@ void setup() {
     #endif
   }
 
+  Serial.begin(115200);
+
+  // Démarrage BLE immédiat pour annonce instantanée sur batterie
   initBleTransport();
+
+  // Courte attente optionnelle pour USB CDC natif (Uno R4, Nano 33 BLE) tout en servant le BLE
+  unsigned long waitStart = millis();
+  while (!Serial && (millis() - waitStart < 400)) {
+    pollBleTransport();
+    delay(5);
+  }
 
   Serial.println(F("========================================"));
   Serial.print(F("Carte détectée : "));

@@ -87,7 +87,9 @@ final class ControllerStorageService: ObservableObject {
 
     func adaptIfNotCustomized(to board: ArduinoBoardCapability) {
         guard !hasCustomEdits else { return }
-        assignments = activePreset.buildAssignments(for: board)
+        let adapted = activePreset.buildAssignments(for: board)
+        guard assignments != adapted else { return }
+        assignments = adapted
         persistAssignmentsOnly()
     }
 

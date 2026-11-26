@@ -65,6 +65,7 @@ final class BLEManager: NSObject, ObservableObject {
     private var centralManager: CBCentralManager!
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
     private var devicesByID: [UUID: BLEDevice] = [:]
+    private var lastSeenTimestamps: [UUID: TimeInterval] = [:]
     private var scanDevicesDirty: Bool = false
     private var connectedPeripheral: CBPeripheral?
     private var rxCharacteristic: CBCharacteristic?
@@ -73,9 +74,12 @@ final class BLEManager: NSObject, ObservableObject {
     private var supportsWriteWithResponse: Bool = false
     private var maxWriteNoRespLen: Int = 20
     private var maxWriteWithRespLen: Int = 20
-    private var pendingWithoutResponseQueue: [String] = []
+    private var pendingWithoutResponseQueue: [BLEPreparedCommand] = []
     private var pendingCharacteristicServicesCount: Int = 0
     private var discoveredServiceUUIDStrings: [String] = []
+    private var usedTargetedDiscovery: Bool = false
+    private var didAttemptFullFallbackDiscovery: Bool = false
+    private var didDiscoverFullCharScan: Bool = false
     private var rxLineBuffer: String = ""
 
     private var scanTimeoutTimer: Timer?
@@ -115,6 +119,7 @@ final class BLEManager: NSObject, ObservableObject {
         }
 
         devicesByID.removeAll()
+        lastSeenTimestamps.removeAll()
         scanDevicesDirty = false
         discoveredDevices = []
         connectionState = .scanning
@@ -124,9 +129,10 @@ final class BLEManager: NSObject, ObservableObject {
         let alreadyConnected = centralManager.retrieveConnectedPeripherals(
             withServices: BLEProtocolConstants.knownArduinoServiceUUIDs
         )
-        let now = Date()
+        let now = CFAbsoluteTimeGetCurrent()
         for peripheral in alreadyConnected {
             peripheralsByID[peripheral.identifier] = peripheral
+            lastSeenTimestamps[peripheral.identifier] = now
             let device = BLEDevice(
                 id: peripheral.identifier,
                 rawName: peripheral.name,
@@ -253,12 +259,22 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     func send(command: String, preferWithoutResponse: Bool = true) {
+        let packet = BLEPreparedCommand.make(command, coalesceKey: Self.inferCoalesceKey(for: command))
+        sendPrepared(packet, preferWithoutResponse: preferWithoutResponse)
+    }
+
+    func sendPrepared(_ packet: BLEPreparedCommand, preferWithoutResponse: Bool = true) {
         guard let peripheral = connectedPeripheral,
               peripheral.state == .connected,
               let rxChar = rxCharacteristic else {
             let msg = "Envoi impossible : aucun Arduino connecté."
             appendLog(.error, msg)
             return
+        }
+
+        // Un arrêt d'urgence ou une écriture critique purge toute trame périmée en attente sur la même broche
+        if packet.payload == BLEProtocolConstants.emergencyStopPacket.payload {
+            pendingWithoutResponseQueue.removeAll(keepingCapacity: true)
         }
 
         let writeType: CBCharacteristicWriteType
@@ -274,26 +290,28 @@ final class BLEManager: NSObject, ObservableObject {
             maxChunk = maxWriteNoRespLen
         }
 
+        if writeType == .withResponse, let key = packet.coalesceKey, !pendingWithoutResponseQueue.isEmpty {
+            pendingWithoutResponseQueue.removeAll { $0.coalesceKey == key }
+        }
+
         // Protection anti-saturation L2CAP CoreBluetooth (utile en streaming rapide manette PS4)
         if writeType == .withoutResponse && (!peripheral.canSendWriteWithoutResponse || !pendingWithoutResponseQueue.isEmpty) {
-            enqueuePendingWithoutResponse(command)
+            enqueuePendingWithoutResponse(packet)
             return
         }
 
-        writeNormalizedCommand(command, to: peripheral, rxChar: rxChar, writeType: writeType, maxChunk: maxChunk)
+        writePreparedPacket(packet, to: peripheral, rxChar: rxChar, writeType: writeType, maxChunk: maxChunk)
     }
 
-    private func writeNormalizedCommand(
-        _ command: String,
+    private func writePreparedPacket(
+        _ packet: BLEPreparedCommand,
         to peripheral: CBPeripheral,
         rxChar: CBCharacteristic,
         writeType: CBCharacteristicWriteType,
         maxChunk: Int
     ) {
-        let normalized = command.hasSuffix("\n") ? command : (command + "\n")
-        guard let data = normalized.data(using: .utf8), !data.isEmpty else {
-            return
-        }
+        let data = packet.payload
+        guard !data.isEmpty else { return }
 
         if data.count <= maxChunk {
             peripheral.writeValue(data, for: rxChar, type: writeType)
@@ -306,26 +324,32 @@ final class BLEManager: NSObject, ObservableObject {
             }
         }
 
-        let displayCmd = command.hasSuffix("\n") ? String(command.dropLast()) : command
-        appendLog(.tx, displayCmd.trimmingCharacters(in: .newlines))
+        appendLog(.tx, packet.logText)
     }
 
-    private func enqueuePendingWithoutResponse(_ command: String) {
-        // Pour les commandes continues P:<pin>: ou V:<pin>:, ne conserver que la dernière valeur par broche
-        if command.hasPrefix("P:") || command.hasPrefix("V:") {
-            let parts = command.split(separator: ":", maxSplits: 2)
-            if parts.count >= 2 {
-                let pinPrefix = "\(parts[0]):\(parts[1]):"
-                if let existingIdx = pendingWithoutResponseQueue.firstIndex(where: { $0.hasPrefix(pinPrefix) }) {
-                    pendingWithoutResponseQueue[existingIdx] = command
-                    return
-                }
-            }
+    private func enqueuePendingWithoutResponse(_ packet: BLEPreparedCommand) {
+        if let key = packet.coalesceKey,
+           let existingIdx = pendingWithoutResponseQueue.firstIndex(where: { $0.coalesceKey == key }) {
+            pendingWithoutResponseQueue[existingIdx] = packet
+            return
         }
         if pendingWithoutResponseQueue.count >= 8 {
             pendingWithoutResponseQueue.removeFirst()
         }
-        pendingWithoutResponseQueue.append(command)
+        pendingWithoutResponseQueue.append(packet)
+    }
+
+    private static func inferCoalesceKey(for command: String) -> String? {
+        guard command.count >= 4 else { return nil }
+        let idx1 = command.index(after: command.startIndex)
+        guard command[idx1] == ":" else { return nil }
+        let kind = command[command.startIndex]
+        guard kind == "P" || kind == "V" || kind == "D" else { return nil }
+        let rest = command[command.index(after: idx1)...]
+        if let secondColon = rest.firstIndex(of: ":") {
+            return String(command[command.startIndex ... secondColon])
+        }
+        return nil
     }
 
     func requestBoardInfo() {
@@ -338,20 +362,24 @@ final class BLEManager: NSObject, ObservableObject {
 
     func setManualBoardOverride(_ boardType: ArduinoBoardType) {
         manualBoardOverride = boardType
+        let resolvedCap: ArduinoBoardCapability
         if boardType == .auto {
             if let autoCap = lastAutoDetectedCapability {
-                detectedBoardCapability = autoCap
+                resolvedCap = autoCap
             } else if let peripheral = connectedPeripheral {
                 let inferred = ArduinoBoardCapability.inferFromDeviceMetadata(
                     name: peripheral.name ?? "",
                     serviceUUIDStrings: discoveredServiceUUIDStrings
                 )
-                detectedBoardCapability = ArduinoBoardCapability.defaultCapability(for: inferred, isAutoDetected: true)
+                resolvedCap = ArduinoBoardCapability.defaultCapability(for: inferred, isAutoDetected: true)
             } else {
-                detectedBoardCapability = ArduinoBoardCapability.defaultCapability(for: .unoR4WiFi, isAutoDetected: true)
+                resolvedCap = ArduinoBoardCapability.defaultCapability(for: .unoR4WiFi, isAutoDetected: true)
             }
         } else {
-            detectedBoardCapability = ArduinoBoardCapability.defaultCapability(for: boardType, isAutoDetected: false)
+            resolvedCap = ArduinoBoardCapability.defaultCapability(for: boardType, isAutoDetected: false)
+        }
+        if detectedBoardCapability != resolvedCap {
+            detectedBoardCapability = resolvedCap
         }
     }
 
@@ -387,6 +415,9 @@ final class BLEManager: NSObject, ObservableObject {
         pendingWithoutResponseQueue.removeAll()
         pendingCharacteristicServicesCount = 0
         discoveredServiceUUIDStrings = []
+        usedTargetedDiscovery = false
+        didAttemptFullFallbackDiscovery = false
+        didDiscoverFullCharScan = false
         rxLineBuffer = ""
         connectedRSSI = nil
         latestTemperature = nil
@@ -419,14 +450,18 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     private func flushScanUpdatesIfNeeded() {
-        let now = Date()
-        let beforeCount = devicesByID.count
-        devicesByID = devicesByID.filter { now.timeIntervalSince($0.value.lastSeen) <= 12.0 }
-        let removedStale = (devicesByID.count != beforeCount)
+        let now = CFAbsoluteTimeGetCurrent()
+        var removedStale = false
+        for (id, seenAt) in lastSeenTimestamps where (now - seenAt) > 12.0 {
+            lastSeenTimestamps.removeValue(forKey: id)
+            if devicesByID.removeValue(forKey: id) != nil {
+                removedStale = true
+            }
+        }
 
         guard scanDevicesDirty || removedStale else { return }
         scanDevicesDirty = false
-        discoveredDevices = devicesByID.values.sorted { lhs, rhs in
+        let sorted = devicesByID.values.sorted { lhs, rhs in
             if lhs.isLikelyArduino != rhs.isLikelyArduino {
                 return lhs.isLikelyArduino && !rhs.isLikelyArduino
             }
@@ -437,6 +472,9 @@ final class BLEManager: NSObject, ObservableObject {
                 return lhs.hasResolvedName && !rhs.hasResolvedName
             }
             return lhs.rssi > rhs.rssi
+        }
+        if discoveredDevices != sorted {
+            discoveredDevices = sorted
         }
     }
 
@@ -496,6 +534,13 @@ final class BLEManager: NSObject, ObservableObject {
         }
 
         guard let rxChar = chosenRX else {
+            if !didDiscoverFullCharScan {
+                didDiscoverFullCharScan = true
+                didAttemptFullFallbackDiscovery = true
+                usedTargetedDiscovery = false
+                peripheral.discoverServices(nil)
+                return
+            }
             let errMsg = "Aucune caractéristique d'écriture BLE compatible trouvée sur ce périphérique."
             lastErrorMessage = errMsg
             appendLog(.error, errMsg)
@@ -519,7 +564,9 @@ final class BLEManager: NSObject, ObservableObject {
             )
             let cap = ArduinoBoardCapability.defaultCapability(for: inferred, isAutoDetected: true)
             lastAutoDetectedCapability = cap
-            detectedBoardCapability = cap
+            if detectedBoardCapability != cap {
+                detectedBoardCapability = cap
+            }
         }
 
         if let txChar = chosenTX,
@@ -573,7 +620,7 @@ final class BLEManager: NSObject, ObservableObject {
             appendLog(.rx, line)
             if let capability = ArduinoBoardCapability.parse(infoLine: line) {
                 lastAutoDetectedCapability = capability
-                if manualBoardOverride == .auto {
+                if manualBoardOverride == .auto && detectedBoardCapability != capability {
                     detectedBoardCapability = capability
                 }
                 appendLog(.info, "Carte identifiée : \(capability.boardType.displayName) (\(capability.availablePins.count) broches)")
@@ -650,8 +697,10 @@ extension BLEManager: CBCentralManagerDelegate {
         let rssiValue = RSSI.intValue
         // Ignorer les lectures RSSI invalides (127 indique indisponible dans CoreBluetooth)
         let normalizedRSSI = (rssiValue == 127) ? -99 : rssiValue
+        let now = CFAbsoluteTimeGetCurrent()
 
         peripheralsByID[peripheral.identifier] = peripheral
+        lastSeenTimestamps[peripheral.identifier] = now
         let existing = devicesByID[peripheral.identifier]
 
         // Fusionner les paquets ADV_IND (UUIDs) et SCAN_RSP (LocalName) sans écraser les infos déjà reçues
@@ -662,19 +711,34 @@ extension BLEManager: CBCentralManagerDelegate {
             ?? (peripheralName?.isEmpty == false ? peripheralName : nil)
             ?? existing?.rawName
 
-        var mergedUUIDSet = Set(existing?.advertisedServiceUUIDs ?? [])
-        if let primaryUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
-            mergedUUIDSet.formUnion(primaryUUIDs)
+        let primaryUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]
+        let overflowUUIDs = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID]
+        let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data]
+
+        let existingUUIDs = existing?.advertisedServiceUUIDs ?? []
+        var hasNewUUID = false
+        if let primaryUUIDs {
+            for uuid in primaryUUIDs where !existingUUIDs.contains(uuid) {
+                hasNewUUID = true
+                break
+            }
         }
-        if let overflowUUIDs = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] {
-            mergedUUIDSet.formUnion(overflowUUIDs)
+        if !hasNewUUID, let overflowUUIDs {
+            for uuid in overflowUUIDs where !existingUUIDs.contains(uuid) {
+                hasNewUUID = true
+                break
+            }
         }
-        if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] {
-            mergedUUIDSet.formUnion(serviceData.keys)
+        if !hasNewUUID, let serviceData {
+            for uuid in serviceData.keys where !existingUUIDs.contains(uuid) {
+                hasNewUUID = true
+                break
+            }
         }
-        let mergedUUIDs = Array(mergedUUIDSet).sorted { $0.uuidString < $1.uuidString }
 
         let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        let incomingMfrID = BLEDevice.parseManufacturerID(from: manufacturerData)
+
         let connectableFlag: Bool
         if let rawBool = advertisementData[CBAdvertisementDataIsConnectable] as? Bool {
             connectableFlag = rawBool
@@ -691,6 +755,27 @@ extension BLEManager: CBCentralManagerDelegate {
             smoothedRSSI = normalizedRSSI
         }
 
+        // Chemin rapide zéro-allocation : si rien de visible n'a changé, ne pas reconstruire BLEDevice
+        if let existing,
+           mergedName == existing.rawName,
+           !hasNewUUID,
+           (incomingMfrID == nil || incomingMfrID == existing.manufacturerID),
+           connectableFlag == existing.isConnectable,
+           abs(existing.rssi - smoothedRSSI) < 2 {
+            return
+        }
+
+        let mergedUUIDs: [CBUUID]
+        if hasNewUUID || existing == nil {
+            var mergedUUIDSet = Set(existingUUIDs)
+            if let primaryUUIDs { mergedUUIDSet.formUnion(primaryUUIDs) }
+            if let overflowUUIDs { mergedUUIDSet.formUnion(overflowUUIDs) }
+            if let serviceData { mergedUUIDSet.formUnion(serviceData.keys) }
+            mergedUUIDs = mergedUUIDSet.isEmpty ? [] : Array(mergedUUIDSet).sorted { $0.uuidString < $1.uuidString }
+        } else {
+            mergedUUIDs = existingUUIDs
+        }
+
         let updatedDevice = BLEDevice(
             id: peripheral.identifier,
             rawName: mergedName,
@@ -699,7 +784,7 @@ extension BLEManager: CBCentralManagerDelegate {
             manufacturerData: manufacturerData,
             manufacturerID: existing?.manufacturerID,
             isConnectable: connectableFlag,
-            lastSeen: Date()
+            lastSeen: now
         )
         devicesByID[peripheral.identifier] = updatedDevice
 
@@ -709,9 +794,7 @@ extension BLEManager: CBCentralManagerDelegate {
         if existing == nil || resolvedNewName || resolvedNewArduino {
             scanDevicesDirty = true
             flushScanUpdatesIfNeeded()
-        } else if abs((existing?.rssi ?? smoothedRSSI) - smoothedRSSI) >= 2
-                    || existing?.displayName != updatedDevice.displayName
-                    || existing?.advertisedServiceUUIDs.count != updatedDevice.advertisedServiceUUIDs.count {
+        } else {
             scanDevicesDirty = true
         }
     }
@@ -723,7 +806,20 @@ extension BLEManager: CBCentralManagerDelegate {
         connectionState = .discoveringServices(name)
         appendLog(.info, "Connecté à \(name). Découverte des services...")
         peripheral.delegate = self
-        peripheral.discoverServices(nil)
+
+        let hasKnownAdvService = devicesByID[peripheral.identifier]?.advertisedServiceUUIDs.contains(where: {
+            BLEProtocolConstants.knownArduinoServiceUUIDs.contains($0)
+        }) ?? false
+
+        if hasKnownAdvService {
+            usedTargetedDiscovery = true
+            didAttemptFullFallbackDiscovery = false
+            peripheral.discoverServices(BLEProtocolConstants.knownArduinoServiceUUIDs)
+        } else {
+            usedTargetedDiscovery = false
+            didAttemptFullFallbackDiscovery = true
+            peripheral.discoverServices(nil)
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -764,6 +860,13 @@ extension BLEManager: CBPeripheralDelegate {
         }
 
         let services = peripheral.services ?? []
+        if services.isEmpty && usedTargetedDiscovery && !didAttemptFullFallbackDiscovery {
+            didAttemptFullFallbackDiscovery = true
+            usedTargetedDiscovery = false
+            peripheral.discoverServices(nil)
+            return
+        }
+
         guard !services.isEmpty else {
             let msg = "Aucun service BLE exposé par cet appareil."
             lastErrorMessage = msg
@@ -772,8 +875,46 @@ extension BLEManager: CBPeripheralDelegate {
             return
         }
 
-        pendingCharacteristicServicesCount = services.count
-        for service in services {
+        if !didDiscoverFullCharScan {
+            // Prioriser la découverte ciblée sur le service UART connu pour connecter 2 à 3x plus vite
+            if let customService = services.first(where: { $0.uuid == BLEProtocolConstants.customServiceUUID }) {
+                pendingCharacteristicServicesCount = 1
+                peripheral.discoverCharacteristics(
+                    [BLEProtocolConstants.customRXCharacteristicUUID, BLEProtocolConstants.customTXCharacteristicUUID],
+                    for: customService
+                )
+                return
+            }
+
+            if let hm10Service = services.first(where: { $0.uuid == BLEProtocolConstants.hm10ServiceUUID }) {
+                pendingCharacteristicServicesCount = 1
+                peripheral.discoverCharacteristics([BLEProtocolConstants.hm10CharacteristicUUID], for: hm10Service)
+                return
+            }
+
+            if let nordicService = services.first(where: { $0.uuid == BLEProtocolConstants.nordicServiceUUID }) {
+                pendingCharacteristicServicesCount = 1
+                peripheral.discoverCharacteristics(
+                    [BLEProtocolConstants.nordicRXCharacteristicUUID, BLEProtocolConstants.nordicTXCharacteristicUUID],
+                    for: nordicService
+                )
+                return
+            }
+        }
+
+        let targetServices: [CBService]
+        if didDiscoverFullCharScan {
+            targetServices = services
+        } else {
+            let nonSystemServices = services.filter { !BLEProtocolConstants.systemMetadataServiceUUIDs.contains($0.uuid) }
+            targetServices = nonSystemServices.isEmpty ? services : nonSystemServices
+            if targetServices.count == services.count {
+                didDiscoverFullCharScan = true
+            }
+        }
+
+        pendingCharacteristicServicesCount = targetServices.count
+        for service in targetServices {
             peripheral.discoverCharacteristics(nil, for: service)
         }
     }
@@ -820,9 +961,9 @@ extension BLEManager: CBPeripheralDelegate {
               peripheral.state == .connected,
               let rxChar = rxCharacteristic else { return }
         while !pendingWithoutResponseQueue.isEmpty && peripheral.canSendWriteWithoutResponse {
-            let nextCmd = pendingWithoutResponseQueue.removeFirst()
-            writeNormalizedCommand(
-                nextCmd,
+            let nextPacket = pendingWithoutResponseQueue.removeFirst()
+            writePreparedPacket(
+                nextPacket,
                 to: peripheral,
                 rxChar: rxChar,
                 writeType: .withoutResponse,

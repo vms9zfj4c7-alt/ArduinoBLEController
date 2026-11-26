@@ -24,9 +24,8 @@ struct ControllerView: View {
 
                     LogConsoleView(
                         logStore: viewModel.logStore,
-                        rawCommandText: $viewModel.rawCommandText,
                         isConnected: viewModel.connectionState.isConnected,
-                        onSendRawCommand: { viewModel.sendRawCommand() },
+                        onSendRawCommand: { viewModel.sendRawCommand($0) },
                         onClearLogs: { viewModel.clearLogs() }
                     )
                 }
@@ -328,7 +327,7 @@ struct ControllerView: View {
             slot: slot,
             config: viewModel.assignment(for: slot),
             initialValue: viewModel.initialSliderValue(for: slot),
-            externalUpdates: viewModel.externalSliderUpdates.eraseToAnyPublisher(),
+            externalUpdates: viewModel.externalSliderUpdates,
             onChanged: { value, isFinal in
                 viewModel.handleSliderChanged(slot: slot, value: value, isFinal: isFinal)
             }
@@ -441,7 +440,7 @@ private struct ShoulderPillButton: View {
 private struct AnalogSliderCard: View {
     let slot: GamepadSlot
     let config: ButtonAssignment
-    let externalUpdates: AnyPublisher<(slot: GamepadSlot, value: Double), Never>
+    let externalUpdates: PassthroughSubject<(slot: GamepadSlot, value: Double), Never>
     let onChanged: (Double, Bool) -> Void
 
     @State private var localValue: Double
@@ -450,7 +449,7 @@ private struct AnalogSliderCard: View {
         slot: GamepadSlot,
         config: ButtonAssignment,
         initialValue: Double,
-        externalUpdates: AnyPublisher<(slot: GamepadSlot, value: Double), Never>,
+        externalUpdates: PassthroughSubject<(slot: GamepadSlot, value: Double), Never>,
         onChanged: @escaping (Double, Bool) -> Void
     ) {
         self.slot = slot

@@ -39,7 +39,8 @@ final class PS4ControllerManager: ObservableObject {
     private var activeStandardButtons: Set<GamepadSlot> = []
     private var lastRightStickX: Float = 0
     private var lastRightStickY: Float = 0
-    private var lastTriggerValues: [GamepadSlot: Float] = [:]
+    private var lastLeftTriggerValue: Float = -1
+    private var lastRightTriggerValue: Float = -1
     private var batteryTimer: Timer?
     private var lastLightbarState: BLEManager.ConnectionState = .disconnected
 
@@ -114,14 +115,28 @@ final class PS4ControllerManager: ObservableObject {
     @objc private func handleControllerDidConnect(_ notification: Notification) {
         guard let controller = notification.object as? GCController,
               controller.extendedGamepad != nil else { return }
-        attach(controller: controller)
+        if Thread.isMainThread {
+            attach(controller: controller)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.attach(controller: controller)
+            }
+        }
     }
 
     @objc private func handleControllerDidDisconnect(_ notification: Notification) {
         guard let controller = notification.object as? GCController else { return }
-        if activeController === controller {
-            detachCurrentController(notifyLog: true)
-            refreshConnectedControllers()
+        let handle = { [weak self] in
+            guard let self else { return }
+            if self.activeController === controller {
+                self.detachCurrentController(notifyLog: true)
+                self.refreshConnectedControllers()
+            }
+        }
+        if Thread.isMainThread {
+            handle()
+        } else {
+            DispatchQueue.main.async(execute: handle)
         }
     }
 
@@ -173,12 +188,17 @@ final class PS4ControllerManager: ObservableObject {
 
     private func updateBatteryLevel() {
         guard let battery = activeController?.battery else {
-            batteryPercentage = nil
+            if batteryPercentage != nil {
+                batteryPercentage = nil
+            }
             return
         }
         let level = battery.batteryLevel
         if level >= 0 {
-            batteryPercentage = min(max(Int((level * 100.0).rounded()), 0), 100)
+            let clamped = min(max(Int((level * 100.0).rounded()), 0), 100)
+            if batteryPercentage != clamped {
+                batteryPercentage = clamped
+            }
         }
     }
 
@@ -270,11 +290,15 @@ final class PS4ControllerManager: ObservableObject {
         trigger.valueChangedHandler = { [weak self] _, value, pressed in
             guard let self else { return }
             let filtered: Float = (value < self.triggerDeadzone) ? 0.0 : value
-            let previous = self.lastTriggerValues[slot] ?? -1.0
+            let previous = (slot == .sliderLeft) ? self.lastLeftTriggerValue : self.lastRightTriggerValue
             if abs(previous - filtered) < 0.015 && filtered != 0.0 && filtered != 1.0 {
                 return
             }
-            self.lastTriggerValues[slot] = filtered
+            if slot == .sliderLeft {
+                self.lastLeftTriggerValue = filtered
+            } else {
+                self.lastRightTriggerValue = filtered
+            }
             let isFinal = (!pressed && filtered == 0.0) || (filtered >= 0.99)
             self.onSliderNormalizedChanged?(slot, Double(filtered), isFinal)
         }
@@ -312,16 +336,21 @@ final class PS4ControllerManager: ObservableObject {
         activeStickDirections.removeAll()
         activeStandardButtons.removeAll()
 
-        let activeTriggers = lastTriggerValues.filter { $0.value > 0.0 }
-        lastTriggerValues.removeAll()
+        let hadLeftTrigger = lastLeftTriggerValue > 0.0
+        let hadRightTrigger = lastRightTriggerValue > 0.0
+        lastLeftTriggerValue = -1
+        lastRightTriggerValue = -1
         lastRightStickX = 0
         lastRightStickY = 0
 
         for slot in allHeld {
             onSlotUp?(slot)
         }
-        for (slot, _) in activeTriggers {
-            onSliderNormalizedChanged?(slot, 0.0, true)
+        if hadLeftTrigger {
+            onSliderNormalizedChanged?(.sliderLeft, 0.0, true)
+        }
+        if hadRightTrigger {
+            onSliderNormalizedChanged?(.sliderRight, 0.0, true)
         }
     }
 }

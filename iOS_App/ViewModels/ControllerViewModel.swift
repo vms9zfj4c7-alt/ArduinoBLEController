@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import UIKit
+import QuartzCore
 
 /// ViewModel haute performance pilotant l'écran manette, le pont manette PS4 -> BLE et la console.
 final class ControllerViewModel: ObservableObject {
@@ -22,7 +23,6 @@ final class ControllerViewModel: ObservableObject {
     @Published private(set) var assignments: [GamepadSlot: ButtonAssignment] = [:]
     // Publié uniquement pour les boutons interrupteurs (toggle) afin d'éviter des re-rendus inutiles
     @Published private(set) var toggledStates: [GamepadSlot: Bool] = [:]
-    @Published var rawCommandText: String = ""
 
     var logStore: BLELogStore { bleManager.logStore }
     let externalSliderUpdates = PassthroughSubject<(slot: GamepadSlot, value: Double), Never>()
@@ -35,13 +35,15 @@ final class ControllerViewModel: ObservableObject {
     // États internes non publiés pour zéro re-rendu SwiftUI lors des appuis maintenus et glissements
     private var momentaryPressedSlots: Set<GamepadSlot> = []
     private var sliderCache: [GamepadSlot: Double] = [:]
-    private var lastSliderSendTime: [GamepadSlot: Date] = [:]
+    private var lastSliderSendTime: [GamepadSlot: CFAbsoluteTime] = [:]
     private var lastSentSliderInt: [GamepadSlot: Int] = [:]
     private var lastDisplayedExternalInt: [GamepadSlot: Int] = [:]
-    private var cachedActiveCommands: [GamepadSlot: [String]] = [:]
-    private var cachedReleaseCommands: [GamepadSlot: [String]] = [:]
-    private var cachedSliderLookup: [GamepadSlot: [String]] = [:]
-    private let sliderThrottleInterval: TimeInterval = 0.045
+    private var pendingSliderValues: [GamepadSlot: Int] = [:]
+    private var pendingSliderFlushWorkItems: [GamepadSlot: DispatchWorkItem] = [:]
+    private var cachedActivePackets: [GamepadSlot: [BLEPreparedCommand]] = [:]
+    private var cachedReleasePackets: [GamepadSlot: [BLEPreparedCommand]] = [:]
+    private var cachedSliderLookup: [GamepadSlot: [BLEPreparedCommand]] = [:]
+    private let sliderThrottleInterval: CFTimeInterval = 0.030
 
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let mediumHaptic = UIImpactFeedbackGenerator(style: .medium)
@@ -66,6 +68,10 @@ final class ControllerViewModel: ObservableObject {
         bindBLEManager()
         bindStorageService()
         bindPS4Controller()
+    }
+
+    deinit {
+        cancelAllPendingSliderFlushes()
     }
 
     func assignment(for slot: GamepadSlot) -> ButtonAssignment {
@@ -99,24 +105,39 @@ final class ControllerViewModel: ObservableObject {
             momentaryPressedSlots.insert(slot)
             lightHaptic.impactOccurred()
             lightHaptic.prepare()
-            let cmds = cachedActiveCommands[slot] ?? config.generateCommands(isActive: true)
-            sendCommands(cmds, preferWithoutResponse: true)
+            sendSlotPackets(
+                cachedActivePackets[slot],
+                fallbackCommands: { config.generateCommands(isActive: true) },
+                preferWithoutResponse: true
+            )
 
         case .toggle:
             let nextState = !(toggledStates[slot] ?? false)
             toggledStates[slot] = nextState
             mediumHaptic.impactOccurred()
             mediumHaptic.prepare()
-            let cmds = nextState
-                ? (cachedActiveCommands[slot] ?? config.generateCommands(isActive: true))
-                : (cachedReleaseCommands[slot] ?? config.generateCommands(isActive: false))
-            sendCommands(cmds, preferWithoutResponse: false)
+            if nextState {
+                sendSlotPackets(
+                    cachedActivePackets[slot],
+                    fallbackCommands: { config.generateCommands(isActive: true) },
+                    preferWithoutResponse: false
+                )
+            } else {
+                sendSlotPackets(
+                    cachedReleasePackets[slot],
+                    fallbackCommands: { config.generateCommands(isActive: false) },
+                    preferWithoutResponse: false
+                )
+            }
 
         case .push:
             lightHaptic.impactOccurred()
             lightHaptic.prepare()
-            let cmds = cachedActiveCommands[slot] ?? config.generateCommands(isActive: true)
-            sendCommands(cmds, preferWithoutResponse: true)
+            sendSlotPackets(
+                cachedActivePackets[slot],
+                fallbackCommands: { config.generateCommands(isActive: true) },
+                preferWithoutResponse: true
+            )
         }
     }
 
@@ -125,41 +146,50 @@ final class ControllerViewModel: ObservableObject {
         guard config.actionType != .emergencyStop else { return }
 
         if config.behavior == .momentary && momentaryPressedSlots.remove(slot) != nil {
-            let cmds = cachedReleaseCommands[slot] ?? config.generateCommands(isActive: false)
-            sendCommands(cmds, preferWithoutResponse: false)
+            sendSlotPackets(
+                cachedReleasePackets[slot],
+                fallbackCommands: { config.generateCommands(isActive: false) },
+                preferWithoutResponse: false
+            )
         }
     }
 
     func handleSliderChanged(slot: GamepadSlot, value: Double, isFinal: Bool) {
         sliderCache[slot] = value
         let intVal = Int(value.rounded())
-        let config = assignment(for: slot)
-        let now = Date()
+        let now = CACurrentMediaTime()
 
         if !isFinal {
             if lastSentSliderInt[slot] == intVal {
+                cancelPendingSliderFlush(for: slot)
                 return
             }
-            if let lastTime = lastSliderSendTime[slot],
-               now.timeIntervalSince(lastTime) < sliderThrottleInterval {
+            if let lastTime = lastSliderSendTime[slot] {
+                let elapsed = now - lastTime
+                if elapsed < sliderThrottleInterval {
+                    // Trailing-edge flush pour garantir la prise en compte si l'utilisateur s'arrête juste après une trame bridée
+                    pendingSliderValues[slot] = intVal
+                    if pendingSliderFlushWorkItems[slot] == nil {
+                        let workItem = DispatchWorkItem { [weak self] in
+                            self?.flushPendingSliderValue(for: slot)
+                        }
+                        pendingSliderFlushWorkItems[slot] = workItem
+                        DispatchQueue.main.asyncAfter(deadline: .now() + (sliderThrottleInterval - elapsed), execute: workItem)
+                    }
+                    return
+                }
+            }
+        } else {
+            cancelPendingSliderFlush(for: slot)
+            if lastSentSliderInt[slot] == intVal {
+                lightHaptic.impactOccurred()
+                lightHaptic.prepare()
                 return
             }
-        } else if lastSentSliderInt[slot] == intVal {
-            lightHaptic.impactOccurred()
-            lightHaptic.prepare()
-            return
         }
 
-        lastSliderSendTime[slot] = now
-        lastSentSliderInt[slot] = intVal
-        if let lookup = cachedSliderLookup[slot], intVal >= 0 && intVal < lookup.count {
-            bleManager.send(command: lookup[intVal], preferWithoutResponse: !isFinal)
-        } else {
-            sendCommands(
-                config.generateCommands(isActive: true, sliderValue: intVal),
-                preferWithoutResponse: !isFinal
-            )
-        }
+        cancelPendingSliderFlush(for: slot)
+        sendSliderInt(slot: slot, intVal: intVal, timestamp: now, preferWithoutResponse: !isFinal)
         if isFinal {
             lightHaptic.impactOccurred()
             lightHaptic.prepare()
@@ -168,16 +198,17 @@ final class ControllerViewModel: ObservableObject {
 
     func triggerEmergencyStop() {
         notificationHaptic.notificationOccurred(.warning)
+        cancelAllPendingSliderFlushes()
         toggledStates.removeAll()
         momentaryPressedSlots.removeAll()
-        bleManager.send(command: BLEProtocolConstants.emergencyStopCommand, preferWithoutResponse: false)
+        lastSentSliderInt.removeAll()
+        bleManager.sendPrepared(BLEProtocolConstants.emergencyStopPacket, preferWithoutResponse: false)
     }
 
-    func sendRawCommand() {
-        let trimmed = rawCommandText.trimmingCharacters(in: .whitespacesAndNewlines)
+    func sendRawCommand(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         bleManager.send(command: trimmed, preferWithoutResponse: false)
-        rawCommandText = ""
     }
 
     func reconnectLastDevice() {
@@ -214,6 +245,7 @@ final class ControllerViewModel: ObservableObject {
             bleManager.setAppActive(true)
             ps4Manager.refreshConnectedControllers()
         } else {
+            cancelAllPendingSliderFlushes()
             let held = momentaryPressedSlots
             for slot in held {
                 handleButtonUp(slot: slot)
@@ -226,12 +258,13 @@ final class ControllerViewModel: ObservableObject {
 
     private func bindBLEManager() {
         bleManager.$connectionState
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .sink { [weak self] newState in
                 guard let self else { return }
                 self.connectionState = newState
                 self.ps4Manager.updateLightbar(for: newState)
                 if !newState.isConnected {
+                    self.cancelAllPendingSliderFlushes()
                     self.toggledStates.removeAll()
                     self.momentaryPressedSlots.removeAll()
                     self.lastSentSliderInt.removeAll()
@@ -240,7 +273,7 @@ final class ControllerViewModel: ObservableObject {
             .store(in: &cancellables)
 
         bleManager.$detectedBoardCapability
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .sink { [weak self] capability in
                 guard let self else { return }
                 self.boardCapability = capability
@@ -249,51 +282,52 @@ final class ControllerViewModel: ObservableObject {
             .store(in: &cancellables)
 
         bleManager.$activeProfileDescription
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$activeProfileDescription)
 
         bleManager.$latestTemperature
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$latestTemperature)
 
         bleManager.$isTemperatureSimulated
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$isTemperatureSimulated)
 
         bleManager.$connectedRSSI
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$connectedRSSI)
 
         bleManager.$lastConnectedDeviceName
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$lastConnectedDeviceName)
 
         bleManager.$lastErrorMessage
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$errorMessage)
     }
 
     private func bindStorageService() {
         storageService.$assignments
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .sink { [weak self] updated in
                 self?.assignments = updated
                 self?.lastSentSliderInt.removeAll()
                 self?.lastDisplayedExternalInt.removeAll()
+                self?.cancelAllPendingSliderFlushes()
                 self?.rebuildCommandCache(with: updated)
                 self?.syncSliderRanges(with: updated)
             }
             .store(in: &cancellables)
 
         storageService.$ps4LeftStickAsDPad
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .sink { [weak self] enabled in
                 self?.ps4Manager.useLeftStickAsDPad = enabled
             }
             .store(in: &cancellables)
 
         storageService.$ps4RightStickAsSliders
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .sink { [weak self] enabled in
                 self?.ps4Manager.useRightStickAsSliders = enabled
             }
@@ -305,19 +339,19 @@ final class ControllerViewModel: ObservableObject {
         ps4Manager.useRightStickAsSliders = storageService.ps4RightStickAsSliders
 
         ps4Manager.$isConnected
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$isPS4Connected)
 
         ps4Manager.$controllerName
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$ps4ControllerName)
 
         ps4Manager.$batteryPercentage
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$ps4BatteryPercentage)
 
         ps4Manager.$isDiscovering
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$isPS4Discovering)
 
         ps4Manager.onSlotDown = { [weak self] slot in
@@ -344,33 +378,114 @@ final class ControllerViewModel: ObservableObject {
         }
     }
 
-    private func sendCommands(_ commands: [String], preferWithoutResponse: Bool) {
-        for command in commands {
-            bleManager.send(command: command, preferWithoutResponse: preferWithoutResponse)
+    private func sendSlotPackets(
+        _ cached: [BLEPreparedCommand]?,
+        fallbackCommands: () -> [String],
+        preferWithoutResponse: Bool
+    ) {
+        if let packets = cached {
+            for packet in packets {
+                bleManager.sendPrepared(packet, preferWithoutResponse: preferWithoutResponse)
+            }
+        } else {
+            for command in fallbackCommands() {
+                bleManager.send(command: command, preferWithoutResponse: preferWithoutResponse)
+            }
         }
     }
 
+    private func sendSliderInt(
+        slot: GamepadSlot,
+        intVal: Int,
+        timestamp: CFAbsoluteTime,
+        preferWithoutResponse: Bool
+    ) {
+        lastSliderSendTime[slot] = timestamp
+        lastSentSliderInt[slot] = intVal
+        if let lookup = cachedSliderLookup[slot], intVal >= 0 && intVal < lookup.count {
+            bleManager.sendPrepared(lookup[intVal], preferWithoutResponse: preferWithoutResponse)
+        } else {
+            let config = assignment(for: slot)
+            let commands = config.generateCommands(isActive: true, sliderValue: intVal)
+            for command in commands {
+                bleManager.send(command: command, preferWithoutResponse: preferWithoutResponse)
+            }
+        }
+    }
+
+    private func flushPendingSliderValue(for slot: GamepadSlot) {
+        pendingSliderFlushWorkItems.removeValue(forKey: slot)
+        guard let pendingInt = pendingSliderValues.removeValue(forKey: slot),
+              lastSentSliderInt[slot] != pendingInt else { return }
+        sendSliderInt(slot: slot, intVal: pendingInt, timestamp: CACurrentMediaTime(), preferWithoutResponse: true)
+    }
+
+    private func cancelPendingSliderFlush(for slot: GamepadSlot) {
+        pendingSliderFlushWorkItems.removeValue(forKey: slot)?.cancel()
+        pendingSliderValues.removeValue(forKey: slot)
+    }
+
+    private func cancelAllPendingSliderFlushes() {
+        for workItem in pendingSliderFlushWorkItems.values {
+            workItem.cancel()
+        }
+        pendingSliderFlushWorkItems.removeAll()
+        pendingSliderValues.removeAll()
+    }
+
     private func rebuildCommandCache(with updated: [GamepadSlot: ButtonAssignment]) {
-        var activeMap: [GamepadSlot: [String]] = [:]
-        var releaseMap: [GamepadSlot: [String]] = [:]
-        var sliderMap: [GamepadSlot: [String]] = [:]
+        var activeMap: [GamepadSlot: [BLEPreparedCommand]] = [:]
+        var releaseMap: [GamepadSlot: [BLEPreparedCommand]] = [:]
+        var sliderMap: [GamepadSlot: [BLEPreparedCommand]] = [:]
 
         for (slot, config) in updated {
-            activeMap[slot] = config.generateCommands(isActive: true)
-            releaseMap[slot] = config.generateCommands(isActive: false)
+            let coalesceKey = Self.coalesceKey(for: config, slot: slot)
+            activeMap[slot] = config.generateCommands(isActive: true).map {
+                BLEPreparedCommand.make($0, coalesceKey: coalesceKey)
+            }
+            releaseMap[slot] = config.generateCommands(isActive: false).map {
+                BLEPreparedCommand.make($0, coalesceKey: coalesceKey)
+            }
 
             if slot.isSlider {
                 if config.actionType == .pinServo {
-                    sliderMap[slot] = (0...180).map { BLEProtocolConstants.servoCommand(pin: config.primaryPin, angle: $0) }
+                    let key = "V:\(config.primaryPin):"
+                    sliderMap[slot] = (0...180).map {
+                        BLEPreparedCommand.make(
+                            BLEProtocolConstants.servoCommand(pin: config.primaryPin, angle: $0),
+                            coalesceKey: key
+                        )
+                    }
                 } else if config.actionType == .pinPWM {
-                    sliderMap[slot] = (0...255).map { BLEProtocolConstants.pwmCommand(pin: config.primaryPin, value: $0) }
+                    let key = "P:\(config.primaryPin):"
+                    sliderMap[slot] = (0...255).map {
+                        BLEPreparedCommand.make(
+                            BLEProtocolConstants.pwmCommand(pin: config.primaryPin, value: $0),
+                            coalesceKey: key
+                        )
+                    }
                 }
             }
         }
 
-        cachedActiveCommands = activeMap
-        cachedReleaseCommands = releaseMap
+        cachedActivePackets = activeMap
+        cachedReleasePackets = releaseMap
         cachedSliderLookup = sliderMap
+    }
+
+    private static func coalesceKey(for config: ButtonAssignment, slot: GamepadSlot) -> String? {
+        switch config.actionType {
+        case .pinPWM:
+            return "P:\(config.primaryPin):"
+        case .pinServo:
+            return "V:\(config.primaryPin):"
+        case .pinDigital:
+            return "D:\(config.primaryPin):"
+        case .multiPin:
+            return "M:\(slot.rawValue)"
+        case .customCommand, .emergencyStop:
+            return nil
+        }
     }
 
     private func syncSliderRanges(with updated: [GamepadSlot: ButtonAssignment]) {

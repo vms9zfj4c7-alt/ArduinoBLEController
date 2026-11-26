@@ -41,23 +41,23 @@ final class ScanViewModel: ObservableObject {
                     || (device.manufacturerName?.localizedCaseInsensitiveContains(query) ?? false)
             }
         }
-        .receive(on: DispatchQueue.main)
+        .removeDuplicates()
         .assign(to: &$filteredDevices)
 
         bleManager.$connectionState
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$connectionState)
 
         bleManager.$bluetoothState
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$bluetoothState)
 
         bleManager.$lastConnectedDeviceName
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$lastConnectedDeviceName)
 
         bleManager.$lastErrorMessage
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
             .assign(to: &$errorMessage)
     }
 

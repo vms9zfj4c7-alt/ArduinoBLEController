@@ -49,7 +49,7 @@ final class BLELogStore: ObservableObject {
 
     private var backingEntries: [BLELogEntry] = []
     private var isExpanded: Bool = false
-    private var flushScheduled: Bool = false
+    private var flushWorkItem: DispatchWorkItem?
     private let maxEntries: Int
     private let trimSlack = 40
 
@@ -79,26 +79,34 @@ final class BLELogStore: ObservableObject {
     }
 
     func clear() {
+        flushWorkItem?.cancel()
+        flushWorkItem = nil
         backingEntries.removeAll(keepingCapacity: true)
-        entries.removeAll(keepingCapacity: true)
-        totalCount = 0
-        flushScheduled = false
+        if !entries.isEmpty {
+            entries.removeAll(keepingCapacity: true)
+        }
+        if totalCount != 0 {
+            totalCount = 0
+        }
     }
 
     private func scheduleFlush() {
-        guard !flushScheduled else { return }
-        flushScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) { [weak self] in
+        guard flushWorkItem == nil else { return }
+        let item = DispatchWorkItem { [weak self] in
             self?.flushNow()
         }
+        flushWorkItem = item
+        let delay: TimeInterval = isExpanded ? 0.14 : 0.28
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
     private func flushNow() {
-        flushScheduled = false
+        flushWorkItem?.cancel()
+        flushWorkItem = nil
         if totalCount != backingEntries.count {
             totalCount = backingEntries.count
         }
-        if isExpanded {
+        if isExpanded && entries != backingEntries {
             entries = backingEntries
         }
     }
