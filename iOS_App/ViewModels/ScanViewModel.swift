@@ -22,6 +22,7 @@ final class ScanViewModel: ObservableObject {
 
     @Published var filterMode: FilterMode = .namedOnly
     @Published var searchText: String = ""
+    @Published var selectedDeviceID: UUID?
 
     @Published private(set) var filteredDevices: [BLEDevice] = []
     @Published private(set) var connectionState: BLEManager.ConnectionState = .disconnected
@@ -109,7 +110,12 @@ final class ScanViewModel: ObservableObject {
     }
 
     func connect(to device: BLEDevice) {
+        selectedDeviceID = device.id
         bleManager.connect(to: device)
+    }
+
+    func selectDevice(_ device: BLEDevice) {
+        selectedDeviceID = device.id
     }
 
     func reconnectLastDevice() {

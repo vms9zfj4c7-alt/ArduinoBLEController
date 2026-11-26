@@ -9,6 +9,9 @@ struct BLEDevice: Identifiable, Equatable {
     let advertisedServiceUUIDs: [CBUUID]
     let manufacturerID: UInt16?
     let manufacturerName: String?
+    let txPowerLevel: Int?
+    let estimatedDistanceMeters: Double
+    let baseRadarAngle: Double
     let isConnectable: Bool
     let lastSeen: TimeInterval
 
@@ -29,6 +32,7 @@ struct BLEDevice: Identifiable, Equatable {
         advertisedServiceUUIDs: [CBUUID],
         manufacturerData: Data? = nil,
         manufacturerID: UInt16? = nil,
+        txPowerLevel: Int? = nil,
         isConnectable: Bool = true,
         lastSeen: TimeInterval = CFAbsoluteTimeGetCurrent()
     ) {
@@ -45,6 +49,9 @@ struct BLEDevice: Identifiable, Equatable {
         self.advertisedServiceUUIDs = advertisedServiceUUIDs
         self.manufacturerID = resolvedMfrID
         self.manufacturerName = mfrName
+        self.txPowerLevel = txPowerLevel
+        self.estimatedDistanceMeters = Self.estimateDistanceMeters(rssi: rssi, txPowerLevel: txPowerLevel)
+        self.baseRadarAngle = Self.deterministicAngle(for: id)
         self.isConnectable = isConnectable
         self.lastSeen = lastSeen
         self.hasResolvedName = (cleanName != nil)
@@ -84,6 +91,7 @@ struct BLEDevice: Identifiable, Equatable {
     static func == (lhs: BLEDevice, rhs: BLEDevice) -> Bool {
         lhs.id == rhs.id
             && lhs.rssi == rhs.rssi
+            && lhs.txPowerLevel == rhs.txPowerLevel
             && lhs.rawName == rhs.rawName
             && lhs.manufacturerID == rhs.manufacturerID
             && lhs.isConnectable == rhs.isConnectable
@@ -91,6 +99,40 @@ struct BLEDevice: Identifiable, Equatable {
             && lhs.displayName == rhs.displayName
             && lhs.isLikelyArduino == rhs.isLikelyArduino
             && lhs.detectedModuleHint == rhs.detectedModuleHint
+    }
+
+    var formattedDistance: String {
+        if estimatedDistanceMeters >= 10.0 {
+            return "\(Int(estimatedDistanceMeters.rounded())) m"
+        }
+        return String(format: "%.1f m", estimatedDistanceMeters)
+    }
+
+    var proximityZoneText: String {
+        switch estimatedDistanceMeters {
+        case ..<1.0: return "Très proche"
+        case ..<3.5: return "Proche"
+        case ..<9.0: return "Moyen"
+        default: return "Éloigné"
+        }
+    }
+
+    static func estimateDistanceMeters(rssi: Int, txPowerLevel: Int?) -> Double {
+        let ref1m: Double
+        if let tx = txPowerLevel {
+            ref1m = min(max(Double(tx) - 59.0, -76.0), -46.0)
+        } else {
+            ref1m = -59.0
+        }
+        let exponent = (ref1m - Double(rssi)) / 24.0
+        return min(max(pow(10.0, exponent), 0.2), 25.0)
+    }
+
+    private static func deterministicAngle(for uuid: UUID) -> Double {
+        let b = uuid.uuid
+        let hash = UInt64(b.0) &+ (UInt64(b.5) << 8) &+ (UInt64(b.10) << 16) &+ (UInt64(b.15) << 24)
+        let mixed = (hash &* 2654435761) & 0xFFFF
+        return (Double(mixed) / 65536.0) * (2.0 * Double.pi)
     }
 
     var signalBars: Int {

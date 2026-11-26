@@ -1,9 +1,18 @@
 import SwiftUI
 import CoreBluetooth
 
-/// Écran de scan et de connexion simplifié aux périphériques Arduino Bluetooth Low Energy.
+/// Écran de détection BLE avec radar temps réel calibré selon la distance estimée.
 struct ScanView: View {
     @ObservedObject var viewModel: ScanViewModel
+
+    private var isConnectingSelected: Bool {
+        switch viewModel.connectionState {
+        case .connecting, .discoveringServices:
+            return true
+        default:
+            return false
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -16,79 +25,123 @@ struct ScanView: View {
                 .animation(AppleMotion.fluidSpring, value: viewModel.bluetoothState)
                 .animation(AppleMotion.fluidSpring, value: viewModel.connectionState)
 
-                List {
-                    Section {
-                        Picker("Filtre", selection: $viewModel.filterMode) {
-                            ForEach(ScanViewModel.FilterMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14))
-                        .onChange(of: viewModel.filterMode) { _ in
-                            AppHaptics.selection()
-                        }
-
-                        if case .disconnected = viewModel.connectionState,
-                           let lastName = viewModel.lastConnectedDeviceName {
-                            Button {
-                                AppHaptics.medium()
-                                viewModel.reconnectLastDevice()
-                            } label: {
-                                HStack {
-                                    Text("Reconnecter : \(lastName)")
-                                        .font(.subheadline.weight(.semibold))
-                                    Spacer()
-                                    Text("Rapide")
-                                        .font(.caption2.weight(.bold))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 3)
-                                        .background(Color.accentColor.opacity(0.14))
-                                        .clipShape(Capsule())
+                ScrollView {
+                    VStack(spacing: 14) {
+                        // Barre de filtre rapide + reconnexion 1 appui
+                        VStack(spacing: 10) {
+                            Picker("Filtre", selection: $viewModel.filterMode) {
+                                ForEach(ScanViewModel.FilterMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
                                 }
-                                .contentShape(Rectangle())
                             }
-                        }
-                    }
+                            .pickerStyle(.segmented)
+                            .onChange(of: viewModel.filterMode) { _ in
+                                AppHaptics.selection()
+                            }
 
-                    Section {
-                        if viewModel.filteredDevices.isEmpty {
-                            emptyDevicesView
-                        } else {
-                            ForEach(viewModel.filteredDevices) { device in
-                                DeviceRowView(
-                                    device: device,
-                                    isConnecting: isConnecting(to: device),
-                                    onConnect: {
-                                        AppHaptics.selection()
-                                        viewModel.connect(to: device)
+                            if case .disconnected = viewModel.connectionState,
+                               let lastName = viewModel.lastConnectedDeviceName {
+                                Button {
+                                    AppHaptics.medium()
+                                    viewModel.reconnectLastDevice()
+                                } label: {
+                                    HStack {
+                                        Text("Reconnecter : \(lastName)")
+                                            .font(.subheadline.weight(.semibold))
+                                        Spacer()
+                                        Text("Rapide")
+                                            .font(.caption2.weight(.bold))
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(Color.accentColor.opacity(0.14))
+                                            .clipShape(Capsule())
                                     }
-                                )
-                                .equatable()
+                                    .foregroundStyle(Color.accentColor)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                    .appleGroupedCard(cornerRadius: 14)
+                                }
+                                .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.97))
                             }
                         }
-                    } header: {
-                        HStack {
-                            HStack(spacing: 3) {
-                                Text("Périphériques détectés (")
-                                Text("\(viewModel.filteredDevices.count)")
-                                    .monospacedDigit()
-                                    .contentTransition(.numericText())
-                                Text(")")
+
+                        // Radar interactif selon la distance estimée
+                        BLERadarView(
+                            devices: viewModel.filteredDevices,
+                            selectedDeviceID: viewModel.selectedDeviceID,
+                            isScanning: viewModel.isScanning,
+                            isConnecting: isConnectingSelected,
+                            onSelectDevice: { device in
+                                viewModel.selectDevice(device)
+                            },
+                            onConnectDevice: { device in
+                                viewModel.connect(to: device)
+                            },
+                            onToggleScan: {
+                                viewModel.toggleScan()
                             }
-                            Spacer()
-                            if viewModel.isScanning {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .transition(.opacity)
+                        )
+
+                        // Liste complémentaire triée par proximité
+                        if !viewModel.filteredDevices.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Appareils à proximité (\(viewModel.filteredDevices.count))")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 4)
+
+                                VStack(spacing: 0) {
+                                    ForEach(Array(viewModel.filteredDevices.enumerated()), id: \.element.id) { index, device in
+                                        DeviceRowView(
+                                            device: device,
+                                            isSelected: device.id == viewModel.selectedDeviceID,
+                                            isConnecting: isConnecting(to: device),
+                                            onSelect: {
+                                                AppHaptics.selection()
+                                                withAnimation(AppleMotion.fluidSpring) {
+                                                    viewModel.selectDevice(device)
+                                                }
+                                            },
+                                            onConnect: {
+                                                AppHaptics.medium()
+                                                viewModel.connect(to: device)
+                                            }
+                                        )
+                                        .equatable()
+
+                                        if index < viewModel.filteredDevices.count - 1 {
+                                            Divider()
+                                                .padding(.leading, 68)
+                                                .opacity(0.5)
+                                        }
+                                    }
+                                }
+                                .appleGroupedCard(cornerRadius: 18)
                             }
+                            .animation(AppleMotion.fluidSpring, value: viewModel.filteredDevices)
+                        } else if !viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            VStack(spacing: 10) {
+                                Text("Aucun résultat pour « \(viewModel.searchText) »")
+                                    .font(.subheadline.weight(.semibold))
+                                    .multilineTextAlignment(.center)
+                                Button("Effacer la recherche") {
+                                    AppHaptics.light()
+                                    withAnimation(AppleMotion.fluidSpring) {
+                                        viewModel.searchText = ""
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(20)
+                            .appleGroupedCard(cornerRadius: 18)
                         }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                 }
-                .listStyle(.insetGrouped)
+                .background(Color(.systemGroupedBackground).ignoresSafeArea())
                 .scrollDismissesKeyboard(.interactively)
-                .animation(AppleMotion.fluidSpring, value: viewModel.filteredDevices)
-                .searchable(text: $viewModel.searchText, prompt: "Rechercher un appareil...")
                 .refreshable {
                     if !viewModel.isScanning {
                         AppHaptics.medium()
@@ -96,7 +149,9 @@ struct ScanView: View {
                     }
                 }
             }
-            .navigationTitle("Scanner BLE")
+            .navigationTitle("Radar BLE")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $viewModel.searchText, prompt: "Rechercher un appareil...")
             .onAppear {
                 viewModel.startAutoScanIfNeeded()
             }
@@ -184,45 +239,6 @@ struct ScanView: View {
         }
     }
 
-    private var emptyDevicesView: some View {
-        let hasQuery = !viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-
-        return VStack(spacing: 14) {
-            RadarScanBadge(isScanning: viewModel.isScanning)
-
-            if hasQuery {
-                Text("Aucun résultat pour « \(viewModel.searchText) »")
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                Button("Effacer la recherche") {
-                    AppHaptics.light()
-                    withAnimation(AppleMotion.fluidSpring) {
-                        viewModel.searchText = ""
-                    }
-                }
-                .buttonStyle(.bordered)
-            } else {
-                Text(viewModel.isScanning ? "Recherche d'appareils Arduino BLE..." : "Aucun appareil détecté")
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-                Text("Allumez votre carte Arduino puis touchez son nom pour vous connecter.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                if !viewModel.isScanning {
-                    Button("Lancer le scan") {
-                        AppHaptics.medium()
-                        viewModel.toggleScan()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .padding(.top, 2)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-    }
-
     private var bluetoothStatusMessage: String {
         switch viewModel.bluetoothState {
         case .poweredOff:
@@ -246,138 +262,82 @@ struct ScanView: View {
     }
 }
 
-/// Indicateur radar géométrique sans icône pour l'état vide du scanner BLE.
-private struct RadarScanBadge: View {
-    let isScanning: Bool
-
-    var body: some View {
-        ZStack {
-            if isScanning {
-                RadarWaveRing(delay: 0.0)
-                RadarWaveRing(delay: 0.85)
-            }
-
-            Circle()
-                .fill(isScanning ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.10))
-                .frame(width: 60, height: 60)
-
-            Circle()
-                .strokeBorder(isScanning ? Color.accentColor.opacity(0.35) : Color.secondary.opacity(0.25), lineWidth: 1.5)
-                .frame(width: 36, height: 36)
-
-            Circle()
-                .fill(isScanning ? Color.accentColor : Color.secondary.opacity(0.55))
-                .frame(width: 12, height: 12)
-        }
-        .frame(width: 108, height: 86)
-        .animation(AppleMotion.fluidSpring, value: isScanning)
-    }
-}
-
-private struct RadarWaveRing: View {
-    let delay: Double
-    @State private var expanded = false
-
-    var body: some View {
-        Circle()
-            .stroke(Color.accentColor.opacity(expanded ? 0.0 : 0.45), lineWidth: 1.8)
-            .frame(width: 60, height: 60)
-            .scaleEffect(expanded ? 1.75 : 1.0)
-            .onAppear {
-                expanded = false
-                withAnimation(.easeOut(duration: 1.7).repeatForever(autoreverses: false).delay(delay)) {
-                    expanded = true
-                }
-            }
-    }
-}
-
 private struct DeviceRowView: View, Equatable {
     let device: BLEDevice
+    let isSelected: Bool
     let isConnecting: Bool
+    let onSelect: () -> Void
     let onConnect: () -> Void
 
     static func == (lhs: DeviceRowView, rhs: DeviceRowView) -> Bool {
-        lhs.device == rhs.device && lhs.isConnecting == rhs.isConnecting
+        lhs.device == rhs.device
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isConnecting == rhs.isConnecting
     }
 
     var body: some View {
-        Button(action: onConnect) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(device.isLikelyArduino ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
-                        .frame(width: 44, height: 44)
-                    Text(device.isLikelyArduino ? "ARD" : "BLE")
-                        .font(.caption.weight(.black))
-                        .foregroundStyle(device.isLikelyArduino ? Color.accentColor : Color.secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(device.displayName)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        if device.isLikelyArduino {
-                            Text("Arduino")
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.15))
-                                .foregroundStyle(Color.accentColor)
-                                .clipShape(Capsule())
-                        }
+        HStack(spacing: 12) {
+            Button(action: onSelect) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(device.isLikelyArduino ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
+                            .frame(width: 44, height: 44)
+                        Text(device.isLikelyArduino ? "ARD" : "BLE")
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(device.isLikelyArduino ? Color.accentColor : Color.secondary)
                     }
 
-                    Text(device.detectedModuleHint)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(device.displayName)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            if device.isLikelyArduino {
+                                Text("Arduino")
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.accentColor.opacity(0.15))
+                                    .foregroundStyle(Color.accentColor)
+                                    .clipShape(Capsule())
+                            }
+                        }
+
+                        HStack(spacing: 5) {
+                            Text(device.formattedDistance)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Color.accentColor)
+                                .contentTransition(.numericText())
+                            Text("•")
+                            Text(device.detectedModuleHint)
+                                .lineLimit(1)
+                        }
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                if isConnecting {
-                    ProgressView()
-                        .transition(.scale(scale: 0.8).combined(with: .opacity))
-                } else {
-                    VStack(alignment: .trailing, spacing: 4) {
-                        SignalBarsView(bars: device.signalBars)
-                        Text("\(device.rssi) dBm")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .contentTransition(.numericText())
                     }
-                    .transition(.opacity)
+
+                    Spacer(minLength: 4)
                 }
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if isConnecting {
+                ProgressView()
+                    .padding(.horizontal, 8)
+            } else {
+                Button("Connecter", action: onConnect)
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(isSelected ? Color.accentColor.opacity(0.08) : .clear)
+        .animation(AppleMotion.fluidSpring, value: isSelected)
         .animation(AppleMotion.fluidSpring, value: isConnecting)
-    }
-}
-
-private struct SignalBarsView: View {
-    let bars: Int
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 2) {
-            ForEach(1...4, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(index <= bars ? barColor : Color.secondary.opacity(0.25))
-                    .frame(width: 4, height: CGFloat(index * 4 + 2))
-            }
-        }
-        .animation(.easeInOut(duration: 0.24), value: bars)
-    }
-
-    private var barColor: Color {
-        switch bars {
-        case 4, 3: return .green
-        case 2: return .orange
-        default: return .red
-        }
     }
 }

@@ -18,7 +18,7 @@ struct MainTabView: View {
         TabView(selection: $selectedTab) {
             ScanView(viewModel: scanViewModel)
                 .tabItem {
-                    Label("Scanner", systemImage: "antenna.radiowaves.left.and.right")
+                    Label("Radar", systemImage: "antenna.radiowaves.left.and.right")
                 }
                 .tag(Tab.scan)
 

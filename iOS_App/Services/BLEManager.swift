@@ -757,6 +757,8 @@ extension BLEManager: CBCentralManagerDelegate {
 
         let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
         let incomingMfrID = BLEDevice.parseManufacturerID(from: manufacturerData)
+        let incomingTxPower = (advertisementData[CBAdvertisementDataTxPowerLevelKey] as? NSNumber)?.intValue
+            ?? existing?.txPowerLevel
 
         let connectableFlag: Bool
         if let rawBool = advertisementData[CBAdvertisementDataIsConnectable] as? Bool {
@@ -779,6 +781,7 @@ extension BLEManager: CBCentralManagerDelegate {
            mergedName == existing.rawName,
            !hasNewUUID,
            (incomingMfrID == nil || incomingMfrID == existing.manufacturerID),
+           incomingTxPower == existing.txPowerLevel,
            connectableFlag == existing.isConnectable,
            abs(existing.rssi - smoothedRSSI) < 2 {
             return
@@ -802,6 +805,7 @@ extension BLEManager: CBCentralManagerDelegate {
             advertisedServiceUUIDs: mergedUUIDs,
             manufacturerData: manufacturerData,
             manufacturerID: existing?.manufacturerID,
+            txPowerLevel: incomingTxPower,
             isConnectable: connectableFlag,
             lastSeen: now
         )

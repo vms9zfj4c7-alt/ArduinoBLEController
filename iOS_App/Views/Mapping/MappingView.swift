@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Page de configuration simplifiée permettant d'assigner les boutons et d'adapter la carte Arduino.
+/// Page de configuration simplifiée permettant d'assigner chaque touche en 1 appui.
 struct MappingView: View {
     @ObservedObject var viewModel: MappingViewModel
     @State private var didAdaptPinsFeedback = false
@@ -25,7 +25,7 @@ struct MappingView: View {
     var body: some View {
         NavigationStack {
             List {
-                setupAndPresetsSection
+                quickModeAndPresetSection
                 interactiveGamepadSection
 
                 ForEach(displayedGroups, id: \.title) { group in
@@ -43,11 +43,12 @@ struct MappingView: View {
                     }
                 }
 
+                boardHardwareSection
                 ps4ControllerSection
             }
             .listStyle(.insetGrouped)
             .animation(AppleMotion.fluidSpring, value: viewModel.isSimplifiedMode)
-            .navigationTitle("Assigner Manette")
+            .navigationTitle("Assigner")
             .onDisappear {
                 adaptFeedbackWorkItem?.cancel()
                 adaptFeedbackWorkItem = nil
@@ -70,33 +71,28 @@ struct MappingView: View {
 
     // MARK: - Sections
 
-    private var setupAndPresetsSection: some View {
+    private var quickModeAndPresetSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Disposition de la manette")
-                    .font(.subheadline.weight(.medium))
-
-                Picker(
-                    "Disposition",
-                    selection: Binding(
-                        get: { viewModel.isSimplifiedMode },
-                        set: { enabled in
-                            AppHaptics.selection()
-                            withAnimation(AppleMotion.fluidSpring) {
-                                viewModel.setSimplifiedMode(enabled)
-                            }
+            Picker(
+                "Disposition",
+                selection: Binding(
+                    get: { viewModel.isSimplifiedMode },
+                    set: { enabled in
+                        AppHaptics.selection()
+                        withAnimation(AppleMotion.fluidSpring) {
+                            viewModel.setSimplifiedMode(enabled)
                         }
-                    )
-                ) {
-                    Text("Essentiel (7)").tag(true)
-                    Text("Complet (14)").tag(false)
-                }
-                .pickerStyle(.segmented)
+                    }
+                )
+            ) {
+                Text("Essentiel (7)").tag(true)
+                Text("Complet (14)").tag(false)
             }
-            .padding(.vertical, 4)
+            .pickerStyle(.segmented)
+            .listRowInsets(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14))
 
             Picker(
-                "Modèle rapide",
+                "Modèle prêt à l'emploi",
                 selection: Binding(
                     get: { viewModel.activePreset },
                     set: { preset in
@@ -111,9 +107,92 @@ struct MappingView: View {
                     Text(preset.title).tag(preset)
                 }
             }
+        } header: {
+            Text("Manette & Modèle")
+        }
+    }
 
+    private var interactiveGamepadSection: some View {
+        Section {
+            if viewModel.isSimplifiedMode {
+                VStack(spacing: 12) {
+                    miniWideBar(.sliderLeft)
+
+                    HStack(alignment: .center, spacing: 14) {
+                        VStack(spacing: 4) {
+                            miniSquareButton(.dpadUp)
+                            HStack(spacing: 4) {
+                                miniSquareButton(.dpadLeft)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color(.tertiarySystemFill))
+                                    .frame(width: 34, height: 34)
+                                miniSquareButton(.dpadRight)
+                            }
+                            miniSquareButton(.dpadDown)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        VStack(spacing: 8) {
+                            miniWideActionButton(.buttonA)
+                            miniWideActionButton(.buttonB)
+                        }
+                        .frame(maxWidth: 132)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
+            } else {
+                VStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        miniSlotPill(.shoulderL1)
+                        miniSlotPill(.sliderLeft)
+                        miniSlotPill(.select)
+                        miniSlotPill(.start)
+                        miniSlotPill(.sliderRight)
+                        miniSlotPill(.shoulderR1)
+                    }
+
+                    HStack(alignment: .center, spacing: 14) {
+                        VStack(spacing: 4) {
+                            miniSquareButton(.dpadUp)
+                            HStack(spacing: 4) {
+                                miniSquareButton(.dpadLeft)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color(.tertiarySystemFill))
+                                    .frame(width: 34, height: 34)
+                                miniSquareButton(.dpadRight)
+                            }
+                            miniSquareButton(.dpadDown)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        VStack(spacing: 2) {
+                            miniCircleButton(.buttonY)
+                            HStack(spacing: 24) {
+                                miniCircleButton(.buttonX)
+                                miniCircleButton(.buttonB)
+                            }
+                            miniCircleButton(.buttonA)
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
+            }
+        } header: {
+            Text("Touchez un bouton pour le modifier")
+        }
+    }
+
+    private var boardHardwareSection: some View {
+        Section("Carte Arduino") {
             Picker(
-                "Profil Arduino",
+                "Profil carte",
                 selection: Binding(
                     get: { viewModel.selectedBoardPreference },
                     set: { newPref in
@@ -162,92 +241,11 @@ struct MappingView: View {
             }
             .animation(AppleMotion.fluidSpring, value: viewModel.boardCapability)
             .animation(AppleMotion.fluidSpring, value: didAdaptPinsFeedback)
-        } header: {
-            Text("Configuration rapide")
-        } footer: {
-            Text("Le mode Essentiel limite l'écran aux commandes principales (croix, A, B, STOP et curseur). Le mode Complet affiche les 14 boutons.")
-        }
-    }
-
-    private var interactiveGamepadSection: some View {
-        Section {
-            if viewModel.isSimplifiedMode {
-                VStack(spacing: 12) {
-                    miniWideBar(.sliderLeft)
-
-                    HStack(alignment: .center, spacing: 14) {
-                        VStack(spacing: 4) {
-                            miniSquareButton(.dpadUp)
-                            HStack(spacing: 4) {
-                                miniSquareButton(.dpadLeft)
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(Color(.tertiarySystemFill))
-                                    .frame(width: 34, height: 34)
-                                miniSquareButton(.dpadRight)
-                            }
-                            miniSquareButton(.dpadDown)
-                        }
-
-                        Spacer(minLength: 8)
-
-                        VStack(spacing: 8) {
-                            miniWideActionButton(.buttonA)
-                            miniWideActionButton(.buttonB)
-                        }
-                        .frame(maxWidth: 126)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
-            } else {
-                VStack(spacing: 12) {
-                    HStack(spacing: 6) {
-                        miniSlotPill(.shoulderL1)
-                        miniSlotPill(.sliderLeft)
-                        miniSlotPill(.select)
-                        miniSlotPill(.start)
-                        miniSlotPill(.sliderRight)
-                        miniSlotPill(.shoulderR1)
-                    }
-
-                    HStack(alignment: .center, spacing: 14) {
-                        VStack(spacing: 4) {
-                            miniSquareButton(.dpadUp)
-                            HStack(spacing: 4) {
-                                miniSquareButton(.dpadLeft)
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(Color(.tertiarySystemFill))
-                                    .frame(width: 34, height: 34)
-                                miniSquareButton(.dpadRight)
-                            }
-                            miniSquareButton(.dpadDown)
-                        }
-
-                        Spacer(minLength: 4)
-
-                        VStack(spacing: 2) {
-                            miniCircleButton(.buttonY)
-                            HStack(spacing: 24) {
-                                miniCircleButton(.buttonX)
-                                miniCircleButton(.buttonB)
-                            }
-                            miniCircleButton(.buttonA)
-                        }
-                    }
-                    .padding(.horizontal, 4)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
-            }
-        } header: {
-            Text("Touchez un bouton à modifier")
         }
     }
 
     private var ps4ControllerSection: some View {
-        Section {
+        Section("Manette PS4 Bluetooth") {
             HStack(spacing: 10) {
                 Circle()
                     .fill(viewModel.isPS4Connected ? Color.green : Color.secondary.opacity(0.45))
@@ -309,8 +307,6 @@ struct MappingView: View {
                     }
                 )
             )
-        } header: {
-            Text("Manette PS4 Bluetooth")
         }
     }
 

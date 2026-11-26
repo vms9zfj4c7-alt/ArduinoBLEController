@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Éditeur détaillé pour configurer l'apparence, la broche et le comportement d'un bouton ou curseur.
+/// Éditeur simplifié en quelques appuis pour personnaliser un bouton ou curseur.
 struct ButtonAssignmentEditorView: View {
     let boardCapability: ArduinoBoardCapability
     let isConnected: Bool
@@ -10,6 +10,41 @@ struct ButtonAssignmentEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ButtonAssignment
     @State private var previewPressed = false
+    @State private var showAdvancedOptions: Bool
+
+    private enum SimpleRole: String, CaseIterable, Identifiable {
+        case toggleSwitch
+        case momentaryPress
+        case pwmLevel
+        case servoAngle
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .toggleSwitch: return "Interrupteur"
+            case .momentaryPress: return "Poussoir"
+            case .pwmLevel: return "Variateur"
+            case .servoAngle: return "Servo"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .toggleSwitch: return "ON / OFF au clic"
+            case .momentaryPress: return "Actif tant qu'on appuie"
+            case .pwmLevel: return "Puissance 0 à 255"
+            case .servoAngle: return "Angle 0° à 180°"
+            }
+        }
+    }
+
+    private static let roleColumns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8)
+    ]
+
+    private static let pinGridColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
 
     init(
         assignment: ButtonAssignment,
@@ -23,6 +58,23 @@ struct ButtonAssignmentEditorView: View {
         self.onSave = onSave
         self.onTest = onTest
         _draft = State(initialValue: assignment)
+        let isAdvancedType = (assignment.actionType == .multiPin
+            || assignment.actionType == .customCommand
+            || assignment.actionType == .emergencyStop)
+        _showAdvancedOptions = State(initialValue: isAdvancedType)
+    }
+
+    private var activeSimpleRole: SimpleRole? {
+        switch draft.actionType {
+        case .pinDigital:
+            return (draft.behavior == .toggle) ? .toggleSwitch : .momentaryPress
+        case .pinPWM:
+            return .pwmLevel
+        case .pinServo:
+            return .servoAngle
+        case .multiPin, .customCommand, .emergencyStop:
+            return nil
+        }
     }
 
     private var availableActionTypes: [ButtonActionType] {
@@ -53,11 +105,16 @@ struct ButtonAssignmentEditorView: View {
             Form {
                 livePreviewSection
                 appearanceSection
-                actionTypeSection
-                actionDetailsSection
+                simpleRoleSection
 
-                if !draft.id.isSlider && draft.actionType != .emergencyStop {
-                    behaviorSection
+                if isPinBasedAction {
+                    pinAndValueSection
+                } else {
+                    specialActionDetailsSection
+                }
+
+                if !draft.id.isSlider {
+                    advancedOptionsSection
                 }
 
                 liveTestSection
@@ -65,6 +122,7 @@ struct ButtonAssignmentEditorView: View {
             .scrollDismissesKeyboard(.interactively)
             .animation(AppleMotion.fluidSpring, value: draft.actionType)
             .animation(AppleMotion.fluidSpring, value: draft.behavior)
+            .animation(AppleMotion.fluidSpring, value: showAdvancedOptions)
             .navigationTitle(draft.id.slotDisplayName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -83,6 +141,10 @@ struct ButtonAssignmentEditorView: View {
                 }
             }
         }
+    }
+
+    private var isPinBasedAction: Bool {
+        draft.actionType == .pinDigital || draft.actionType == .pinPWM || draft.actionType == .pinServo
     }
 
     // MARK: - Sections
@@ -158,12 +220,12 @@ struct ButtonAssignmentEditorView: View {
             .animation(AppleMotion.fluidSpring, value: draft.colorToken)
             .animation(AppleMotion.fluidSpring, value: draft.label)
         } header: {
-            Text("Aperçu sur la manette")
+            Text("Aperçu")
         }
     }
 
     private var appearanceSection: some View {
-        Section("Apparence sur la manette") {
+        Section("Nom et couleur") {
             TextField("Nom affiché", text: $draft.label)
 
             VStack(alignment: .leading, spacing: 10) {
@@ -206,32 +268,100 @@ struct ButtonAssignmentEditorView: View {
         }
     }
 
-    private var actionTypeSection: some View {
-        Section {
-            Picker("Type d'action", selection: $draft.actionType) {
-                ForEach(availableActionTypes) { type in
-                    Text(type.displayName).tag(type)
+    private var simpleRoleSection: some View {
+        Section("Que doit faire ce contrôle ?") {
+            if draft.id.isSlider {
+                Picker("Type de curseur", selection: $draft.actionType) {
+                    Text("Servomoteur (0–180°)").tag(ButtonActionType.pinServo)
+                    Text("Variateur PWM (0–255)").tag(ButtonActionType.pinPWM)
                 }
-            }
-            .onChange(of: draft.actionType) { newType in
-                AppHaptics.selection()
-                withAnimation(AppleMotion.fluidSpring) {
-                    adjustDefaults(for: newType)
+                .pickerStyle(.segmented)
+                .onChange(of: draft.actionType) { newType in
+                    AppHaptics.selection()
+                    withAnimation(AppleMotion.fluidSpring) {
+                        adjustDefaults(for: newType)
+                    }
                 }
+            } else {
+                LazyVGrid(columns: Self.roleColumns, spacing: 8) {
+                    ForEach(SimpleRole.allCases) { role in
+                        let selected = (activeSimpleRole == role)
+                        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        Button {
+                            AppHaptics.selection()
+                            withAnimation(AppleMotion.fluidSpring) {
+                                applySimpleRole(role)
+                            }
+                        } label: {
+                            VStack(spacing: 2) {
+                                Text(role.title)
+                                    .font(.caption.weight(.bold))
+                                    .multilineTextAlignment(.center)
+                                Text(role.subtitle)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .multilineTextAlignment(.center)
+                                    .opacity(selected ? 0.88 : 0.72)
+                            }
+                            .foregroundStyle(selected ? .white : .primary)
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .padding(.horizontal, 6)
+                            .background(
+                                shape.fill(selected ? draft.colorToken.color : Color(.tertiarySystemFill))
+                            )
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .padding(.vertical, 4)
             }
-        } header: {
-            Text("Action Arduino (\(boardCapability.boardType.shortBadge))")
         }
     }
 
-    @ViewBuilder
-    private var actionDetailsSection: some View {
-        switch draft.actionType {
-        case .pinDigital:
-            Section("Broche digitale") {
-                pinPickerRow
+    private var pinAndValueSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Choisir la broche Arduino (\(boardCapability.boardType.shortBadge))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                LazyVGrid(columns: Self.pinGridColumns, spacing: 8) {
+                    ForEach(selectablePins) { option in
+                        let isSelected = (draft.primaryPin == option.number)
+                        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        Button {
+                            AppHaptics.selection()
+                            withAnimation(AppleMotion.pressSpring) {
+                                draft.primaryPin = option.number
+                            }
+                        } label: {
+                            VStack(spacing: 1) {
+                                Text("Pin \(option.number)")
+                                    .font(.caption.weight(.bold))
+                                if option.isBuiltInLED {
+                                    Text("LED")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .opacity(0.8)
+                                } else if option.supportsPWM {
+                                    Text("PWM")
+                                        .font(.system(size: 8, weight: .medium))
+                                        .opacity(0.72)
+                                }
+                            }
+                            .foregroundStyle(isSelected ? .white : .primary)
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                            .background(
+                                shape.fill(isSelected ? draft.colorToken.color : Color(.tertiarySystemFill))
+                            )
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+
+            if draft.actionType == .pinDigital {
                 Toggle(
-                    "État actif = HIGH (allumé)",
+                    "Allumer à l'activation (HIGH)",
                     isOn: Binding(
                         get: { draft.activeValue > 0 },
                         set: { newValue in
@@ -241,17 +371,14 @@ struct ButtonAssignmentEditorView: View {
                         }
                     )
                 )
-            }
-
-        case .pinPWM:
-            Section("Sortie PWM (0 à 255)") {
-                pinPickerRow
+            } else if draft.actionType == .pinPWM {
                 if draft.id.isSlider {
                     Stepper("Minimum : \(draft.minSliderValue)", value: $draft.minSliderValue, in: 0...254)
                     Stepper("Maximum : \(draft.maxSliderValue)", value: $draft.maxSliderValue, in: (draft.minSliderValue + 1)...255)
                 } else {
-                    VStack(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("Intensité active : \(draft.activeValue)")
+                            .font(.subheadline.weight(.medium))
                             .contentTransition(.numericText())
                         Slider(
                             value: Binding(
@@ -261,20 +388,17 @@ struct ButtonAssignmentEditorView: View {
                             in: 0...255,
                             step: 1
                         )
+                        .tint(draft.colorToken.color)
                     }
-                    Stepper("Valeur au relâchement : \(draft.releaseValue)", value: $draft.releaseValue, in: 0...255, step: 5)
                 }
-            }
-
-        case .pinServo:
-            Section("Servomoteur (0° à 180°)") {
-                pinPickerRow
+            } else if draft.actionType == .pinServo {
                 if draft.id.isSlider {
                     Stepper("Angle min : \(draft.minSliderValue)°", value: $draft.minSliderValue, in: 0...179, step: 5)
                     Stepper("Angle max : \(draft.maxSliderValue)°", value: $draft.maxSliderValue, in: (draft.minSliderValue + 1)...180, step: 5)
                 } else {
-                    VStack(alignment: .leading) {
-                        Text("Angle actif : \(draft.activeValue)°")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Angle cible : \(draft.activeValue)°")
+                            .font(.subheadline.weight(.medium))
                             .contentTransition(.numericText())
                         Slider(
                             value: Binding(
@@ -284,11 +408,18 @@ struct ButtonAssignmentEditorView: View {
                             in: 0...180,
                             step: 1
                         )
+                        .tint(draft.colorToken.color)
                     }
-                    Stepper("Angle au relâchement : \(draft.releaseValue)°", value: $draft.releaseValue, in: 0...180, step: 5)
                 }
             }
+        } header: {
+            Text("Broche et réglage")
+        }
+    }
 
+    @ViewBuilder
+    private var specialActionDetailsSection: some View {
+        switch draft.actionType {
         case .multiPin:
             Section {
                 if draft.extraPinTargets.isEmpty {
@@ -317,12 +448,10 @@ struct ButtonAssignmentEditorView: View {
                 }
             } header: {
                 Text("Broches pilotées simultanément")
-            } footer: {
-                Text("Idéal pour piloter un pont en H (ex: moteur gauche + droit) depuis une seule touche directionnelle.")
             }
 
         case .customCommand:
-            Section {
+            Section("Commandes texte libres") {
                 TextField("Commande à l'appui (ex: FWD)", text: $draft.pressCommand)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
@@ -332,10 +461,6 @@ struct ButtonAssignmentEditorView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .font(.system(.body, design: .monospaced))
-            } header: {
-                Text("Commandes texte personnalisées")
-            } footer: {
-                Text("Un retour à la ligne (\\n) est ajouté automatiquement lors de l'envoi BLE.")
             }
 
         case .emergencyStop:
@@ -344,37 +469,57 @@ struct ButtonAssignmentEditorView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+
+        case .pinDigital, .pinPWM, .pinServo:
+            EmptyView()
         }
     }
 
-    private var pinPickerRow: some View {
-        Picker("Broche Arduino", selection: $draft.primaryPin) {
-            ForEach(selectablePins) { option in
-                Text(option.displayLabel).tag(option.number)
-            }
-        }
-    }
-
-    private var behaviorSection: some View {
+    private var advancedOptionsSection: some View {
         Section {
-            Picker("Mode d'appui", selection: $draft.behavior) {
-                Text("Maintenu").tag(ButtonBehavior.momentary)
-                Text("ON / OFF").tag(ButtonBehavior.toggle)
-                Text("Impulsion").tag(ButtonBehavior.push)
+            DisclosureGroup("Options avancées", isExpanded: $showAdvancedOptions) {
+                Picker("Type exact", selection: $draft.actionType) {
+                    ForEach(availableActionTypes) { type in
+                        Text(type.displayName).tag(type)
+                    }
+                }
+                .onChange(of: draft.actionType) { newType in
+                    AppHaptics.selection()
+                    withAnimation(AppleMotion.fluidSpring) {
+                        adjustDefaults(for: newType)
+                    }
+                }
+
+                if draft.actionType != .emergencyStop {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Comportement d'appui")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        Picker("Mode d'appui", selection: $draft.behavior) {
+                            Text("Maintenu").tag(ButtonBehavior.momentary)
+                            Text("ON / OFF").tag(ButtonBehavior.toggle)
+                            Text("Impulsion").tag(ButtonBehavior.push)
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: draft.behavior) { _ in
+                            AppHaptics.selection()
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                if draft.actionType == .pinPWM {
+                    Stepper("Valeur au relâchement : \(draft.releaseValue)", value: $draft.releaseValue, in: 0...255, step: 5)
+                } else if draft.actionType == .pinServo {
+                    Stepper("Angle au relâchement : \(draft.releaseValue)°", value: $draft.releaseValue, in: 0...180, step: 5)
+                }
             }
-            .pickerStyle(.segmented)
-            .onChange(of: draft.behavior) { _ in
-                AppHaptics.selection()
-            }
-        } header: {
-            Text("Comportement du bouton")
-        } footer: {
-            Text(draft.behavior.displayName)
         }
     }
 
     private var liveTestSection: some View {
-        Section("Test en direct") {
+        Section("Test sur l'Arduino") {
             HStack(spacing: 12) {
                 Button {
                     AppHaptics.medium()
@@ -391,7 +536,7 @@ struct ButtonAssignmentEditorView: View {
                         AppHaptics.light()
                         onTest(draft, false)
                     } label: {
-                        Text("Tester Repos")
+                        Text("Mettre au repos")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -399,10 +544,33 @@ struct ButtonAssignmentEditorView: View {
                 }
             }
             if !isConnected {
-                Text("Connectez un Arduino pour tester la broche en direct.")
+                Text("Connectez d'abord un Arduino depuis le Radar BLE pour tester en direct.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private func applySimpleRole(_ role: SimpleRole) {
+        switch role {
+        case .toggleSwitch:
+            draft.actionType = .pinDigital
+            draft.behavior = .toggle
+            draft.activeValue = 1
+            draft.releaseValue = 0
+        case .momentaryPress:
+            draft.actionType = .pinDigital
+            draft.behavior = .momentary
+            draft.activeValue = 1
+            draft.releaseValue = 0
+        case .pwmLevel:
+            draft.actionType = .pinPWM
+            draft.behavior = .momentary
+            adjustDefaults(for: .pinPWM)
+        case .servoAngle:
+            draft.actionType = .pinServo
+            draft.behavior = .push
+            adjustDefaults(for: .pinServo)
         }
     }
 
