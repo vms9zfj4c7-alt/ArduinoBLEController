@@ -25,8 +25,16 @@ struct MainTabView: View {
             ControllerView(
                 viewModel: controllerViewModel,
                 telemetryStore: controllerViewModel.telemetryStore,
-                onOpenScan: { selectedTab = .scan },
-                onOpenMapping: { selectedTab = .mapping }
+                onOpenScan: {
+                    withAnimation(AppleMotion.fluidSpring) {
+                        selectedTab = .scan
+                    }
+                },
+                onOpenMapping: {
+                    withAnimation(AppleMotion.fluidSpring) {
+                        selectedTab = .mapping
+                    }
+                }
             )
             .tabItem {
                 Label("Manette", systemImage: "gamecontroller.fill")
@@ -40,11 +48,17 @@ struct MainTabView: View {
                 .tag(Tab.mapping)
         }
         .onChange(of: controllerViewModel.connectionState.isConnected) { isConnected in
-            if isConnected && selectedTab == .scan {
-                withAnimation {
-                    selectedTab = .controller
+            if isConnected {
+                AppHaptics.success()
+                if selectedTab == .scan {
+                    withAnimation(AppleMotion.fluidSpring) {
+                        selectedTab = .controller
+                    }
                 }
             }
+        }
+        .onChange(of: selectedTab) { _ in
+            AppHaptics.selection()
         }
     }
 }

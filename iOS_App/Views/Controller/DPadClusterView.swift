@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Croix directionnelle tactile de style manette avec détection d'appui maintenu / relâchement.
-struct DPadClusterView: View {
+struct DPadClusterView: View, Equatable {
     let upAssignment: ButtonAssignment
     let downAssignment: ButtonAssignment
     let leftAssignment: ButtonAssignment
@@ -14,6 +14,17 @@ struct DPadClusterView: View {
 
     let onDown: (GamepadSlot) -> Void
     let onUp: (GamepadSlot) -> Void
+
+    static func == (lhs: DPadClusterView, rhs: DPadClusterView) -> Bool {
+        lhs.upAssignment == rhs.upAssignment
+            && lhs.downAssignment == rhs.downAssignment
+            && lhs.leftAssignment == rhs.leftAssignment
+            && lhs.rightAssignment == rhs.rightAssignment
+            && lhs.isUpActive == rhs.isUpActive
+            && lhs.isDownActive == rhs.isDownActive
+            && lhs.isLeftActive == rhs.isLeftActive
+            && lhs.isRightActive == rhs.isRightActive
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -37,12 +48,20 @@ struct DPadClusterView: View {
                 )
 
                 ZStack {
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(Color(.tertiarySystemFill))
                         .frame(width: 54, height: 54)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                        )
                     Circle()
                         .fill(Color(.quaternarySystemFill))
-                        .frame(width: 24, height: 24)
+                        .frame(width: 22, height: 22)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75)
+                        )
                 }
 
                 GamepadTactileButton(
@@ -64,11 +83,8 @@ struct DPadClusterView: View {
                 onUp: { onUp(.dpadDown) }
             )
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 28)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .padding(11)
+        .appleGroupedCard(cornerRadius: 28)
     }
 }
 
@@ -81,57 +97,35 @@ struct GamepadTactileButton: View {
     let onDown: () -> Void
     let onUp: () -> Void
 
-    @State private var isPressedLocally = false
-
-    private var highlighted: Bool {
-        isPressedLocally || isActive
-    }
-
     var body: some View {
         let baseColor = assignment.colorToken.color
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
-        VStack(spacing: 3) {
-            Image(systemName: assignment.symbolName)
-                .font(.system(size: size * 0.30, weight: .bold))
-            Text(assignment.label)
-                .font(.system(size: 10, weight: .semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .foregroundStyle(highlighted ? .white : baseColor)
-        .frame(width: size, height: size)
-        .background(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(highlighted ? baseColor : baseColor.opacity(0.16))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(baseColor.opacity(highlighted ? 0.95 : 0.45), lineWidth: 1.5)
-        )
-        .shadow(color: highlighted ? baseColor.opacity(0.35) : .clear, radius: 6, y: 2)
-        .scaleEffect(isPressedLocally ? 0.92 : 1.0)
-        .animation(.easeOut(duration: 0.10), value: isPressedLocally)
-        .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !isPressedLocally {
-                        isPressedLocally = true
-                        onDown()
-                    }
-                }
-                .onEnded { _ in
-                    if isPressedLocally {
-                        isPressedLocally = false
-                        onUp()
-                    }
-                }
-        )
-        .onDisappear {
-            if isPressedLocally {
-                isPressedLocally = false
-                onUp()
+        TactileHoldControl(
+            hitShape: shape,
+            isActive: isActive,
+            pressedScale: 0.91,
+            onDown: onDown,
+            onUp: onUp
+        ) { highlighted, _ in
+            VStack(spacing: 3) {
+                Image(systemName: assignment.symbolName)
+                    .font(.system(size: size * 0.30, weight: .bold))
+                Text(assignment.label)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, 4)
             }
+            .foregroundStyle(highlighted ? .white : baseColor)
+            .frame(width: size, height: size)
+            .background(
+                HardwareKeycapBackground(
+                    shape: shape,
+                    color: baseColor,
+                    highlighted: highlighted
+                )
+            )
         }
         .accessibilityLabel(assignment.label)
     }

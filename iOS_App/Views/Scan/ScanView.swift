@@ -8,17 +8,30 @@ struct ScanView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                bluetoothStateBanner
-                activeConnectionBanner
+                VStack(spacing: 0) {
+                    bluetoothStateBanner
+                    activeConnectionBanner
+                }
+                .clipped()
+                .animation(AppleMotion.fluidSpring, value: viewModel.bluetoothState)
+                .animation(AppleMotion.fluidSpring, value: viewModel.connectionState)
 
                 List {
                     Section {
                         Toggle("Masquer les balises sans nom", isOn: $viewModel.hideUnnamedBeacons)
+                            .onChange(of: viewModel.hideUnnamedBeacons) { _ in
+                                AppHaptics.light()
+                            }
+
                         Toggle("Afficher uniquement les cartes Arduino / BLE", isOn: $viewModel.showOnlyArduinoDevices)
+                            .onChange(of: viewModel.showOnlyArduinoDevices) { _ in
+                                AppHaptics.light()
+                            }
 
                         if case .disconnected = viewModel.connectionState,
                            let lastName = viewModel.lastConnectedDeviceName {
                             Button {
+                                AppHaptics.medium()
                                 viewModel.reconnectLastDevice()
                             } label: {
                                 HStack {
@@ -27,7 +40,7 @@ struct ScanView: View {
                                     Spacer()
                                     Text("Rapide")
                                         .font(.caption2.weight(.bold))
-                                        .padding(.horizontal, 7)
+                                        .padding(.horizontal, 8)
                                         .padding(.vertical, 3)
                                         .background(Color.accentColor.opacity(0.14))
                                         .clipShape(Capsule())
@@ -44,25 +57,39 @@ struct ScanView: View {
                                 DeviceRowView(
                                     device: device,
                                     isConnecting: isConnecting(to: device),
-                                    onConnect: { viewModel.connect(to: device) }
+                                    onConnect: {
+                                        AppHaptics.selection()
+                                        viewModel.connect(to: device)
+                                    }
                                 )
+                                .equatable()
                             }
                         }
                     } header: {
                         HStack {
-                            Text("Périphériques détectés (\(viewModel.filteredDevices.count))")
+                            HStack(spacing: 3) {
+                                Text("Périphériques détectés (")
+                                Text("\(viewModel.filteredDevices.count)")
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText())
+                                Text(")")
+                            }
                             Spacer()
                             if viewModel.isScanning {
                                 ProgressView()
                                     .controlSize(.small)
+                                    .transition(.opacity)
                             }
                         }
                     }
                 }
                 .listStyle(.insetGrouped)
+                .scrollDismissesKeyboard(.interactively)
+                .animation(AppleMotion.fluidSpring, value: viewModel.filteredDevices)
                 .searchable(text: $viewModel.searchText, prompt: "Rechercher un appareil...")
                 .refreshable {
                     if !viewModel.isScanning {
+                        AppHaptics.medium()
                         viewModel.toggleScan()
                     }
                 }
@@ -70,7 +97,10 @@ struct ScanView: View {
             .navigationTitle("Scanner BLE")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: viewModel.toggleScan) {
+                    Button {
+                        AppHaptics.medium()
+                        viewModel.toggleScan()
+                    } label: {
                         HStack(spacing: 6) {
                             Image(systemName: viewModel.isScanning ? "stop.circle.fill" : "antenna.radiowaves.left.and.right")
                             Text(viewModel.isScanning ? "Stop" : "Scanner")
@@ -78,6 +108,7 @@ struct ScanView: View {
                         .font(.subheadline.weight(.semibold))
                     }
                     .tint(viewModel.isScanning ? .red : .accentColor)
+                    .animation(AppleMotion.pressSpring, value: viewModel.isScanning)
                 }
             }
             .alert(
@@ -110,6 +141,7 @@ struct ScanView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(Color.orange)
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -120,43 +152,65 @@ struct ScanView: View {
                 EmptyView()
             } else {
                 HStack(spacing: 10) {
-                    Circle()
-                        .fill(viewModel.connectionState.isConnected ? Color.green : Color.orange)
-                        .frame(width: 10, height: 10)
+                    LivePulseBeacon(
+                        color: viewModel.connectionState.isConnected ? Color.green : Color.orange,
+                        isPulsing: viewModel.connectionState.isBusy,
+                        dotSize: 9
+                    )
                     Text(viewModel.connectionState.statusText)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer()
                     Button("Déconnecter", role: .destructive) {
+                        AppHaptics.soft()
                         viewModel.disconnect()
                     }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
+                    .controlSize(.mini)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .background(Color(.secondarySystemBackground))
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
     }
 
     private var emptyDevicesView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: viewModel.isScanning ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-            Text(viewModel.isScanning ? "Recherche d'appareils Arduino BLE..." : "Aucun appareil détecté")
-                .font(.headline)
-            Text("Vérifiez que la carte Arduino est alimentée et que le sketch BLE est téléversé, puis appuyez sur Scanner.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            if !viewModel.isScanning {
-                Button("Lancer le scan") {
-                    viewModel.toggleScan()
+        let hasQuery = !viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        return VStack(spacing: 14) {
+            RadarScanBadge(isScanning: viewModel.isScanning)
+
+            if hasQuery {
+                Text("Aucun résultat pour « \(viewModel.searchText) »")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                Button("Effacer la recherche") {
+                    AppHaptics.light()
+                    withAnimation(AppleMotion.fluidSpring) {
+                        viewModel.searchText = ""
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 4)
+                .buttonStyle(.bordered)
+            } else {
+                Text(viewModel.isScanning ? "Recherche d'appareils Arduino BLE..." : "Aucun appareil détecté")
+                    .font(.headline)
+                Text("Vérifiez que la carte Arduino est alimentée et que le sketch BLE est téléversé, puis appuyez sur Scanner.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                if !viewModel.isScanning {
+                    Button {
+                        AppHaptics.medium()
+                        viewModel.toggleScan()
+                    } label: {
+                        Label("Lancer le scan", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.top, 2)
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -186,16 +240,62 @@ struct ScanView: View {
     }
 }
 
-private struct DeviceRowView: View {
+/// Illustration radar iOS pour l'état vide du scanner BLE.
+private struct RadarScanBadge: View {
+    let isScanning: Bool
+
+    var body: some View {
+        ZStack {
+            if isScanning {
+                RadarWaveRing(delay: 0.0)
+                RadarWaveRing(delay: 0.85)
+            }
+
+            Circle()
+                .fill(isScanning ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.10))
+                .frame(width: 68, height: 68)
+
+            Image(systemName: isScanning ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right")
+                .font(.system(size: 30, weight: .medium))
+                .foregroundStyle(isScanning ? Color.accentColor : Color.secondary)
+        }
+        .frame(width: 112, height: 92)
+        .animation(AppleMotion.fluidSpring, value: isScanning)
+    }
+}
+
+private struct RadarWaveRing: View {
+    let delay: Double
+    @State private var expanded = false
+
+    var body: some View {
+        Circle()
+            .stroke(Color.accentColor.opacity(expanded ? 0.0 : 0.45), lineWidth: 1.8)
+            .frame(width: 68, height: 68)
+            .scaleEffect(expanded ? 1.75 : 1.0)
+            .onAppear {
+                expanded = false
+                withAnimation(.easeOut(duration: 1.7).repeatForever(autoreverses: false).delay(delay)) {
+                    expanded = true
+                }
+            }
+    }
+}
+
+private struct DeviceRowView: View, Equatable {
     let device: BLEDevice
     let isConnecting: Bool
     let onConnect: () -> Void
+
+    static func == (lhs: DeviceRowView, rhs: DeviceRowView) -> Bool {
+        lhs.device == rhs.device && lhs.isConnecting == rhs.isConnecting
+    }
 
     var body: some View {
         Button(action: onConnect) {
             HStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(device.isLikelyArduino ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
                         .frame(width: 44, height: 44)
                     Image(systemName: device.isLikelyArduino ? "cpu.fill" : "wave.3.right")
@@ -223,24 +323,29 @@ private struct DeviceRowView: View {
                     Text(device.detectedModuleHint)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
                 Spacer()
 
                 if isConnecting {
                     ProgressView()
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
                 } else {
                     VStack(alignment: .trailing, spacing: 4) {
                         SignalBarsView(bars: device.signalBars)
                         Text("\(device.rssi) dBm")
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .contentTransition(.numericText())
                     }
+                    .transition(.opacity)
                 }
             }
             .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .animation(AppleMotion.fluidSpring, value: isConnecting)
     }
 }
 
@@ -250,11 +355,12 @@ private struct SignalBarsView: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 2) {
             ForEach(1...4, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 1.5)
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                     .fill(index <= bars ? barColor : Color.secondary.opacity(0.25))
                     .frame(width: 4, height: CGFloat(index * 4 + 2))
             }
         }
+        .animation(.easeInOut(duration: 0.24), value: bars)
     }
 
     private var barColor: Color {

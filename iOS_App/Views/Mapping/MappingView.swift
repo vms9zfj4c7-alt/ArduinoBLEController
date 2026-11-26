@@ -3,6 +3,8 @@ import SwiftUI
 /// Page de configuration permettant d'assigner chaque bouton style manette et d'adapter la carte Arduino.
 struct MappingView: View {
     @ObservedObject var viewModel: MappingViewModel
+    @State private var didAdaptPinsFeedback = false
+    @State private var adaptFeedbackWorkItem: DispatchWorkItem?
 
     private static let slotGroups: [(title: String, slots: [GamepadSlot])] = [
         ("Croix directionnelle", [.dpadUp, .dpadDown, .dpadLeft, .dpadRight]),
@@ -24,17 +26,22 @@ struct MappingView: View {
                         ForEach(group.slots) { slot in
                             let assignment = viewModel.assignment(for: slot)
                             Button {
+                                AppHaptics.selection()
                                 viewModel.selectedSlotForEditing = slot
                             } label: {
                                 AssignmentRowView(slot: slot, assignment: assignment)
+                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Assigner Manette")
+            .onDisappear {
+                adaptFeedbackWorkItem?.cancel()
+                adaptFeedbackWorkItem = nil
+            }
             .sheet(item: $viewModel.selectedSlotForEditing) { slot in
                 ButtonAssignmentEditorView(
                     assignment: viewModel.assignment(for: slot),
@@ -59,7 +66,12 @@ struct MappingView: View {
                 "Profil Arduino",
                 selection: Binding(
                     get: { viewModel.selectedBoardPreference },
-                    set: { viewModel.selectBoardPreference($0) }
+                    set: { newPref in
+                        AppHaptics.selection()
+                        withAnimation(AppleMotion.fluidSpring) {
+                            viewModel.selectBoardPreference(newPref)
+                        }
+                    }
                 )
             ) {
                 ForEach(ArduinoBoardType.allCases) { board in
@@ -71,9 +83,16 @@ struct MappingView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Carte active")
                         .font(.subheadline.weight(.medium))
-                    Text("\(viewModel.boardCapability.boardType.displayName) • \(viewModel.boardCapability.availablePins.count) broches")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Text(viewModel.boardCapability.boardType.displayName)
+                        Text("•")
+                        Text("\(viewModel.boardCapability.availablePins.count)")
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                        Text("broches")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text(viewModel.boardCapability.isAutoDetected ? "Auto" : "Manuel")
@@ -84,12 +103,22 @@ struct MappingView: View {
                     .foregroundStyle(Color.accentColor)
                     .clipShape(Capsule())
             }
+            .animation(AppleMotion.fluidSpring, value: viewModel.boardCapability)
 
             Button {
-                viewModel.adaptPresetToCurrentBoard()
+                triggerAdaptWithFeedback()
             } label: {
-                Label("Réadapter automatiquement les broches", systemImage: "wand.and.stars")
+                HStack {
+                    Label("Réadapter automatiquement les broches", systemImage: "wand.and.stars")
+                    Spacer()
+                    if didAdaptPinsFeedback {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .transition(.scale(scale: 0.7).combined(with: .opacity))
+                    }
+                }
             }
+            .animation(AppleMotion.fluidSpring, value: didAdaptPinsFeedback)
         } header: {
             Text("Adaptation à la carte Arduino")
         } footer: {
@@ -101,7 +130,10 @@ struct MappingView: View {
         Section("Modèles prêts à l'emploi") {
             ForEach(BuiltInPresetKind.allCases) { preset in
                 Button {
-                    viewModel.applyPreset(preset)
+                    AppHaptics.medium()
+                    withAnimation(AppleMotion.fluidSpring) {
+                        viewModel.applyPreset(preset)
+                    }
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
@@ -116,10 +148,12 @@ struct MappingView: View {
                         if viewModel.activePreset == preset {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(Color.accentColor)
+                                .transition(.scale(scale: 0.65).combined(with: .opacity))
                         }
                     }
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .animation(AppleMotion.fluidSpring, value: viewModel.activePreset)
             }
         }
     }
@@ -133,9 +167,14 @@ struct MappingView: View {
                     Text(viewModel.isPS4Connected ? viewModel.ps4ControllerName : "Aucune manette PS4 connectée")
                         .font(.subheadline.weight(.medium))
                     if let battery = viewModel.ps4BatteryPercentage {
-                        Text("Batterie : \(battery)%")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 3) {
+                            Text("Batterie :")
+                            Text("\(battery)%")
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     } else {
                         Text("Appairez la DualShock 4 dans Réglages > Bluetooth")
                             .font(.caption)
@@ -144,18 +183,21 @@ struct MappingView: View {
                 }
                 Spacer()
                 Button("Actualiser") {
+                    AppHaptics.light()
                     viewModel.refreshPS4Controllers()
                 }
                 .font(.caption.weight(.semibold))
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
             }
+            .animation(AppleMotion.fluidSpring, value: viewModel.isPS4Connected)
 
             Toggle(
                 "Stick gauche -> Croix directionnelle",
                 isOn: Binding(
                     get: { viewModel.ps4LeftStickAsDPad },
                     set: { newVal in
+                        AppHaptics.light()
                         viewModel.updatePS4Options(
                             leftStickAsDPad: newVal,
                             rightStickAsSliders: viewModel.ps4RightStickAsSliders
@@ -169,6 +211,7 @@ struct MappingView: View {
                 isOn: Binding(
                     get: { viewModel.ps4RightStickAsSliders },
                     set: { newVal in
+                        AppHaptics.light()
                         viewModel.updatePS4Options(
                             leftStickAsDPad: viewModel.ps4LeftStickAsDPad,
                             rightStickAsSliders: newVal
@@ -202,7 +245,7 @@ struct MappingView: View {
                         miniSquareButton(.dpadUp)
                         HStack(spacing: 4) {
                             miniSquareButton(.dpadLeft)
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
                                 .fill(Color(.tertiarySystemFill))
                                 .frame(width: 34, height: 34)
                             miniSquareButton(.dpadRight)
@@ -224,15 +267,34 @@ struct MappingView: View {
                 }
             }
             .padding(.vertical, 8)
+            .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
         } header: {
             Text("Manette interactive (touchez un bouton à configurer)")
         }
     }
 
+    private func triggerAdaptWithFeedback() {
+        adaptFeedbackWorkItem?.cancel()
+        AppHaptics.success()
+        withAnimation(AppleMotion.fluidSpring) {
+            viewModel.adaptPresetToCurrentBoard()
+            didAdaptPinsFeedback = true
+        }
+        let item = DispatchWorkItem {
+            withAnimation(AppleMotion.fluidSpring) {
+                didAdaptPinsFeedback = false
+            }
+        }
+        adaptFeedbackWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: item)
+    }
+
     private func miniSlotPill(_ slot: GamepadSlot) -> some View {
         let config = viewModel.assignment(for: slot)
         let color = config.colorToken.color
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         return Button {
+            AppHaptics.selection()
             viewModel.selectedSlotForEditing = slot
         } label: {
             VStack(spacing: 2) {
@@ -247,18 +309,19 @@ struct MappingView: View {
             .padding(.vertical, 6)
             .background(color.opacity(0.14))
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(color.opacity(0.45), lineWidth: 1)
+                shape.strokeBorder(color.opacity(0.45), lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(shape)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
     }
 
     private func miniSquareButton(_ slot: GamepadSlot) -> some View {
         let config = viewModel.assignment(for: slot)
         let color = config.colorToken.color
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         return Button {
+            AppHaptics.selection()
             viewModel.selectedSlotForEditing = slot
         } label: {
             VStack(spacing: 1) {
@@ -271,18 +334,18 @@ struct MappingView: View {
             .frame(width: 42, height: 42)
             .background(color.opacity(0.15))
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(color.opacity(0.5), lineWidth: 1)
+                shape.strokeBorder(color.opacity(0.5), lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(shape)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
     }
 
     private func miniCircleButton(_ slot: GamepadSlot) -> some View {
         let config = viewModel.assignment(for: slot)
         let color = config.colorToken.color
         return Button {
+            AppHaptics.selection()
             viewModel.selectedSlotForEditing = slot
         } label: {
             VStack(spacing: 1) {
@@ -300,7 +363,7 @@ struct MappingView: View {
             )
             .clipShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
     }
 }
 
@@ -311,7 +374,7 @@ private struct AssignmentRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(assignment.colorToken.color.opacity(0.16))
                     .frame(width: 40, height: 40)
                 Image(systemName: assignment.symbolName)

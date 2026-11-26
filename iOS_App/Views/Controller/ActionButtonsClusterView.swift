@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Groupe de 4 boutons d'action disposés en losange (Y, X, B, A) façon manette de jeu.
-struct ActionButtonsClusterView: View {
+struct ActionButtonsClusterView: View, Equatable {
     let buttonY: ButtonAssignment
     let buttonX: ButtonAssignment
     let buttonB: ButtonAssignment
@@ -14,6 +14,17 @@ struct ActionButtonsClusterView: View {
 
     let onDown: (GamepadSlot) -> Void
     let onUp: (GamepadSlot) -> Void
+
+    static func == (lhs: ActionButtonsClusterView, rhs: ActionButtonsClusterView) -> Bool {
+        lhs.buttonY == rhs.buttonY
+            && lhs.buttonX == rhs.buttonX
+            && lhs.buttonB == rhs.buttonB
+            && lhs.buttonA == rhs.buttonA
+            && lhs.isYActive == rhs.isYActive
+            && lhs.isXActive == rhs.isXActive
+            && lhs.isBActive == rhs.isBActive
+            && lhs.isAActive == rhs.isAActive
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -52,10 +63,7 @@ struct ActionButtonsClusterView: View {
             )
         }
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 28)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .appleGroupedCard(cornerRadius: 28)
     }
 }
 
@@ -66,66 +74,51 @@ private struct DiamondFaceButton: View {
     let onDown: () -> Void
     let onUp: () -> Void
 
-    @State private var isPressedLocally = false
-
-    private var highlighted: Bool {
-        isPressedLocally || isActive
-    }
-
     var body: some View {
         let baseColor = assignment.colorToken.color
+        let circle = Circle()
 
-        ZStack(alignment: .topTrailing) {
-            VStack(spacing: 2) {
-                Image(systemName: assignment.symbolName)
-                    .font(.system(size: 18, weight: .bold))
-                Text(assignment.label)
-                    .font(.system(size: 10, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .padding(.horizontal, 4)
-            }
-            .foregroundStyle(highlighted ? .white : baseColor)
-            .frame(width: 64, height: 64)
-            .background(
-                Circle()
-                    .fill(highlighted ? baseColor : baseColor.opacity(0.16))
-            )
-            .overlay(
-                Circle()
-                    .strokeBorder(baseColor.opacity(highlighted ? 0.95 : 0.50), lineWidth: 2)
-            )
-            .shadow(color: highlighted ? baseColor.opacity(0.4) : .clear, radius: 7, y: 2)
+        TactileHoldControl(
+            hitShape: circle,
+            isActive: isActive,
+            pressedScale: 0.90,
+            onDown: onDown,
+            onUp: onUp
+        ) { highlighted, _ in
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 2) {
+                    Image(systemName: assignment.symbolName)
+                        .font(.system(size: 18, weight: .bold))
+                    Text(assignment.label)
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.horizontal, 5)
+                }
+                .foregroundStyle(highlighted ? .white : baseColor)
+                .frame(width: 64, height: 64)
+                .background(
+                    HardwareKeycapBackground(
+                        shape: circle,
+                        color: baseColor,
+                        highlighted: highlighted
+                    )
+                )
 
-            Text(slotLetter)
-                .font(.system(size: 9, weight: .black))
-                .foregroundStyle(.white)
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(baseColor.opacity(0.9)))
-                .offset(x: 2, y: -2)
-        }
-        .scaleEffect(isPressedLocally ? 0.91 : 1.0)
-        .animation(.easeOut(duration: 0.10), value: isPressedLocally)
-        .contentShape(Circle())
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !isPressedLocally {
-                        isPressedLocally = true
-                        onDown()
-                    }
-                }
-                .onEnded { _ in
-                    if isPressedLocally {
-                        isPressedLocally = false
-                        onUp()
-                    }
-                }
-        )
-        .onDisappear {
-            if isPressedLocally {
-                isPressedLocally = false
-                onUp()
+                Text(slotLetter)
+                    .font(.system(size: 9, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 18, height: 18)
+                    .background(
+                        Circle()
+                            .fill(baseColor)
+                            .shadow(color: baseColor.opacity(0.35), radius: 2, y: 1)
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color(.secondarySystemGroupedBackground), lineWidth: 1.5)
+                    )
+                    .offset(x: 2, y: -2)
             }
         }
         .accessibilityLabel("\(slotLetter) - \(assignment.label)")

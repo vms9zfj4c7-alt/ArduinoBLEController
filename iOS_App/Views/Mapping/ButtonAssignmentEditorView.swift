@@ -9,6 +9,7 @@ struct ButtonAssignmentEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ButtonAssignment
+    @State private var previewPressed = false
 
     private static let curatedSymbols: [String] = [
         "arrow.up", "arrow.down", "arrow.left", "arrow.right",
@@ -58,6 +59,7 @@ struct ButtonAssignmentEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                livePreviewSection
                 appearanceSection
                 actionTypeSection
                 actionDetailsSection
@@ -68,6 +70,9 @@ struct ButtonAssignmentEditorView: View {
 
                 liveTestSection
             }
+            .scrollDismissesKeyboard(.interactively)
+            .animation(AppleMotion.fluidSpring, value: draft.actionType)
+            .animation(AppleMotion.fluidSpring, value: draft.behavior)
             .navigationTitle(draft.id.slotDisplayName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -78,6 +83,7 @@ struct ButtonAssignmentEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Enregistrer") {
+                        AppHaptics.success()
                         onSave(draft)
                         dismiss()
                     }
@@ -88,6 +94,80 @@ struct ButtonAssignmentEditorView: View {
     }
 
     // MARK: - Sections
+
+    private var livePreviewSection: some View {
+        let color = draft.colorToken.color
+        let title = draft.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? draft.id.shortCode : draft.label
+
+        return Section {
+            HStack(spacing: 14) {
+                Button {
+                    AppHaptics.light()
+                    withAnimation(AppleMotion.pressSpring) {
+                        previewPressed = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                        withAnimation(AppleMotion.fluidSpring) {
+                            previewPressed = false
+                        }
+                    }
+                } label: {
+                    let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    VStack(spacing: 3) {
+                        Image(systemName: draft.symbolName)
+                            .font(.system(size: 20, weight: .bold))
+                        Text(title)
+                            .font(.system(size: 10, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .padding(.horizontal, 4)
+                    }
+                    .foregroundStyle(previewPressed ? .white : color)
+                    .frame(width: 68, height: 68)
+                    .background(
+                        HardwareKeycapBackground(
+                            shape: shape,
+                            color: color,
+                            highlighted: previewPressed
+                        )
+                    )
+                    .scaleEffect(previewPressed ? 0.91 : 1.0)
+                }
+                .buttonStyle(.borderless)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(draft.id.shortCode)
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(color.opacity(0.16))
+                            .foregroundStyle(color)
+                            .clipShape(Capsule())
+                        Text(draft.id.ps4Hint)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(draft.summaryDescription)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+
+                    Text("Touchez l'aperçu pour simuler l'appui")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            .animation(AppleMotion.fluidSpring, value: draft.colorToken)
+            .animation(AppleMotion.fluidSpring, value: draft.symbolName)
+            .animation(AppleMotion.fluidSpring, value: draft.label)
+        } header: {
+            Text("Aperçu sur la manette")
+        }
+    }
 
     private var appearanceSection: some View {
         Section("Apparence sur la manette") {
@@ -112,17 +192,27 @@ struct ButtonAssignmentEditorView: View {
                 LazyVGrid(columns: Self.symbolGridColumns, spacing: 10) {
                     ForEach(Self.curatedSymbols, id: \.self) { symbol in
                         let selected = (draft.symbolName == symbol)
+                        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
                         Button {
-                            draft.symbolName = symbol
+                            AppHaptics.selection()
+                            withAnimation(AppleMotion.pressSpring) {
+                                draft.symbolName = symbol
+                            }
                         } label: {
                             Image(systemName: symbol)
                                 .font(.body)
                                 .frame(width: 34, height: 34)
                                 .foregroundStyle(selected ? .white : draft.colorToken.color)
                                 .background(selected ? draft.colorToken.color : draft.colorToken.color.opacity(0.14))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .clipShape(shape)
+                                .scaleEffect(selected ? 1.07 : 1.0)
+                                .shadow(
+                                    color: selected ? draft.colorToken.color.opacity(0.35) : .clear,
+                                    radius: 4,
+                                    y: 2
+                                )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.borderless)
                     }
                 }
             }
@@ -138,7 +228,10 @@ struct ButtonAssignmentEditorView: View {
                 }
             }
             .onChange(of: draft.actionType) { newType in
-                adjustDefaults(for: newType)
+                AppHaptics.selection()
+                withAnimation(AppleMotion.fluidSpring) {
+                    adjustDefaults(for: newType)
+                }
             }
         } header: {
             Text("Action Arduino (\(boardCapability.boardType.shortBadge))")
@@ -156,6 +249,7 @@ struct ButtonAssignmentEditorView: View {
                     isOn: Binding(
                         get: { draft.activeValue > 0 },
                         set: { newValue in
+                            AppHaptics.light()
                             draft.activeValue = newValue ? 1 : 0
                             draft.releaseValue = newValue ? 0 : 1
                         }
@@ -172,6 +266,7 @@ struct ButtonAssignmentEditorView: View {
                 } else {
                     VStack(alignment: .leading) {
                         Text("Intensité active : \(draft.activeValue)")
+                            .contentTransition(.numericText())
                         Slider(
                             value: Binding(
                                 get: { Double(draft.activeValue) },
@@ -194,6 +289,7 @@ struct ButtonAssignmentEditorView: View {
                 } else {
                     VStack(alignment: .leading) {
                         Text("Angle actif : \(draft.activeValue)°")
+                            .contentTransition(.numericText())
                         Slider(
                             value: Binding(
                                 get: { Double(draft.activeValue) },
@@ -217,15 +313,21 @@ struct ButtonAssignmentEditorView: View {
                         MultiPinTargetRow(target: $target, boardCapability: boardCapability)
                     }
                     .onDelete { offsets in
-                        draft.extraPinTargets.remove(atOffsets: offsets)
+                        AppHaptics.soft()
+                        withAnimation(AppleMotion.fluidSpring) {
+                            draft.extraPinTargets.remove(atOffsets: offsets)
+                        }
                     }
                 }
 
                 Button {
+                    AppHaptics.light()
                     let defaultPin = boardCapability.availablePins.first?.number ?? draft.primaryPin
-                    draft.extraPinTargets.append(
-                        PinTarget(pin: defaultPin, signalKind: .digital, activeValue: 1, releaseValue: 0)
-                    )
+                    withAnimation(AppleMotion.fluidSpring) {
+                        draft.extraPinTargets.append(
+                            PinTarget(pin: defaultPin, signalKind: .digital, activeValue: 1, releaseValue: 0)
+                        )
+                    }
                 } label: {
                     Label("Ajouter une broche", systemImage: "plus.circle.fill")
                 }
@@ -285,6 +387,7 @@ struct ButtonAssignmentEditorView: View {
         Section("Test en direct") {
             HStack(spacing: 12) {
                 Button {
+                    AppHaptics.medium()
                     onTest(draft, true)
                 } label: {
                     Label("Tester Actif", systemImage: "play.fill")
@@ -295,6 +398,7 @@ struct ButtonAssignmentEditorView: View {
 
                 if draft.behavior == .momentary || draft.actionType == .pinDigital || draft.actionType == .multiPin {
                     Button {
+                        AppHaptics.light()
                         onTest(draft, false)
                     } label: {
                         Label("Tester Repos", systemImage: "stop.fill")

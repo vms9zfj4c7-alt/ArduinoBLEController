@@ -4,7 +4,7 @@ import Combine
 /// Écran principal de contrôle de l'Arduino façon manette de jeu, adaptatif portrait / paysage.
 struct ControllerView: View {
     @ObservedObject var viewModel: ControllerViewModel
-    @ObservedObject var telemetryStore: BLETelemetryStore
+    let telemetryStore: BLETelemetryStore
     let onOpenScan: () -> Void
     let onOpenMapping: () -> Void
 
@@ -33,11 +33,16 @@ struct ControllerView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
             }
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Manette")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(action: onOpenMapping) {
+                    Button {
+                        AppHaptics.selection()
+                        onOpenMapping()
+                    } label: {
                         Label("Assigner", systemImage: "slider.horizontal.3")
                             .font(.subheadline.weight(.medium))
                     }
@@ -46,12 +51,16 @@ struct ControllerView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     if viewModel.connectionState.isConnected {
                         Button("Déconnecter", role: .destructive) {
+                            AppHaptics.soft()
                             viewModel.disconnect()
                         }
                         .font(.subheadline)
                     } else {
-                        Button("Connecter", action: onOpenScan)
-                            .font(.subheadline.weight(.semibold))
+                        Button("Connecter") {
+                            AppHaptics.selection()
+                            onOpenScan()
+                        }
+                        .font(.subheadline.weight(.semibold))
                     }
                 }
             }
@@ -72,13 +81,11 @@ struct ControllerView: View {
     private var statusHeaderCard: some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 11, height: 11)
-                    .overlay(
-                        Circle()
-                            .stroke(statusColor.opacity(0.35), lineWidth: 4)
-                    )
+                LivePulseBeacon(
+                    color: statusColor,
+                    isPulsing: viewModel.connectionState.isBusy,
+                    dotSize: 10
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(viewModel.connectionState.statusText)
@@ -94,7 +101,7 @@ struct ControllerView: View {
                                 .font(.caption2.weight(.bold))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
-                                .background(Color.blue.opacity(0.15))
+                                .background(Color.blue.opacity(0.14))
                                 .foregroundStyle(.blue)
                                 .clipShape(Capsule())
                         }
@@ -103,44 +110,22 @@ struct ControllerView: View {
 
                 Spacer()
 
-                if let temp = telemetryStore.latestTemperature {
-                    Button {
+                TelemetryBadgesView(
+                    telemetryStore: telemetryStore,
+                    onRequestTelemetry: {
+                        AppHaptics.light()
                         viewModel.requestTelemetry()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "thermometer")
-                            Text(String(format: "%.1f °C", temp))
-                                .monospacedDigit()
-                            if telemetryStore.isTemperatureSimulated {
-                                Text("(démo)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(Color.orange.opacity(0.14))
-                        .foregroundStyle(.orange)
-                        .clipShape(Capsule())
                     }
-                    .buttonStyle(.plain)
-                }
-
-                if let rssi = telemetryStore.connectedRSSI {
-                    Text("\(rssi) dBm")
-                        .font(.caption2.monospacedDigit().weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(Color(.tertiarySystemFill))
-                        .clipShape(Capsule())
-                }
+                )
             }
+
+            Divider()
+                .opacity(0.45)
 
             // Ligne d'état manette PS4 / DualShock 4 Bluetooth
             HStack(spacing: 8) {
                 Button {
+                    AppHaptics.selection()
                     showPS4GuideSheet = true
                 } label: {
                     HStack(spacing: 6) {
@@ -153,6 +138,7 @@ struct ControllerView: View {
                         if let battery = viewModel.ps4BatteryPercentage {
                             Text("\(battery)%")
                                 .font(.caption2.monospacedDigit().weight(.bold))
+                                .contentTransition(.numericText())
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(Color.green.opacity(0.15))
@@ -166,12 +152,14 @@ struct ControllerView: View {
                 Spacer()
 
                 Button(viewModel.isPS4Connected ? "Détails" : "Connecter PS4") {
+                    AppHaptics.selection()
                     showPS4GuideSheet = true
                 }
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Color.accentColor)
                 .buttonStyle(.borderless)
             }
+            .animation(AppleMotion.fluidSpring, value: viewModel.isPS4Connected)
 
             if !viewModel.connectionState.isConnected {
                 HStack(spacing: 8) {
@@ -182,24 +170,28 @@ struct ControllerView: View {
                     if case .disconnected = viewModel.connectionState,
                        viewModel.lastConnectedDeviceName != nil {
                         Button("Reconnecter") {
+                            AppHaptics.medium()
                             viewModel.reconnectLastDevice()
                         }
                         .font(.caption.weight(.semibold))
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
                     }
-                    Button("Scanner", action: onOpenScan)
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.mini)
+                    Button("Scanner") {
+                        AppHaptics.selection()
+                        onOpenScan()
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.secondarySystemBackground))
-        )
+        .appleGroupedCard(cornerRadius: 18)
+        .clipped()
+        .animation(AppleMotion.fluidSpring, value: viewModel.connectionState)
     }
 
     // MARK: - Disposition Portrait
@@ -215,6 +207,7 @@ struct ControllerView: View {
                     onDown: { viewModel.handleButtonDown(slot: .shoulderL1) },
                     onUp: { viewModel.handleButtonUp(slot: .shoulderL1) }
                 )
+                .equatable()
 
                 ShoulderPillButton(
                     slotCode: "SEL",
@@ -223,6 +216,7 @@ struct ControllerView: View {
                     onDown: { viewModel.handleButtonDown(slot: .select) },
                     onUp: { viewModel.handleButtonUp(slot: .select) }
                 )
+                .equatable()
 
                 ShoulderPillButton(
                     slotCode: "STA",
@@ -231,6 +225,7 @@ struct ControllerView: View {
                     onDown: { viewModel.handleButtonDown(slot: .start) },
                     onUp: { viewModel.handleButtonUp(slot: .start) }
                 )
+                .equatable()
 
                 ShoulderPillButton(
                     slotCode: "R1",
@@ -239,6 +234,7 @@ struct ControllerView: View {
                     onDown: { viewModel.handleButtonDown(slot: .shoulderR1) },
                     onUp: { viewModel.handleButtonUp(slot: .shoulderR1) }
                 )
+                .equatable()
             }
 
             // Curseurs analogiques L2 & R2
@@ -276,6 +272,7 @@ struct ControllerView: View {
                         onDown: { viewModel.handleButtonDown(slot: .shoulderL1) },
                         onUp: { viewModel.handleButtonUp(slot: .shoulderL1) }
                     )
+                    .equatable()
                 }
                 sliderCard(for: .sliderLeft)
                 dpadCluster
@@ -289,6 +286,8 @@ struct ControllerView: View {
                     onDown: { viewModel.handleButtonDown(slot: .select) },
                     onUp: { viewModel.handleButtonUp(slot: .select) }
                 )
+                .equatable()
+
                 ShoulderPillButton(
                     slotCode: "STA",
                     assignment: viewModel.assignment(for: .start),
@@ -296,6 +295,8 @@ struct ControllerView: View {
                     onDown: { viewModel.handleButtonDown(slot: .start) },
                     onUp: { viewModel.handleButtonUp(slot: .start) }
                 )
+                .equatable()
+
                 Button {
                     viewModel.triggerEmergencyStop()
                 } label: {
@@ -317,6 +318,7 @@ struct ControllerView: View {
                     onDown: { viewModel.handleButtonDown(slot: .shoulderR1) },
                     onUp: { viewModel.handleButtonUp(slot: .shoulderR1) }
                 )
+                .equatable()
                 sliderCard(for: .sliderRight)
                 actionButtonsCluster
             }
@@ -348,6 +350,7 @@ struct ControllerView: View {
             onDown: { viewModel.handleButtonDown(slot: $0) },
             onUp: { viewModel.handleButtonUp(slot: $0) }
         )
+        .equatable()
     }
 
     private var actionButtonsCluster: some View {
@@ -363,6 +366,7 @@ struct ControllerView: View {
             onDown: { viewModel.handleButtonDown(slot: $0) },
             onUp: { viewModel.handleButtonUp(slot: $0) }
         )
+        .equatable()
     }
 
     private var statusColor: Color {
@@ -374,65 +378,108 @@ struct ControllerView: View {
     }
 }
 
-private struct ShoulderPillButton: View {
+/// Badges isolés : seuls ces deux éléments se redessinent lors des paquets RSSI et température.
+private struct TelemetryBadgesView: View {
+    @ObservedObject var telemetryStore: BLETelemetryStore
+    let onRequestTelemetry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let temp = telemetryStore.latestTemperature {
+                Button(action: onRequestTelemetry) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "thermometer")
+                        Text(String(format: "%.1f °C", temp))
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                        if telemetryStore.isTemperatureSimulated {
+                            Text("(démo)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.orange.opacity(0.14))
+                    .foregroundStyle(.orange)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.92))
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+            }
+
+            if let rssi = telemetryStore.connectedRSSI {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(rssiColor(rssi))
+                        .frame(width: 6, height: 6)
+                    Text("\(rssi) dBm")
+                        .font(.caption2.monospacedDigit().weight(.medium))
+                        .contentTransition(.numericText())
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color(.tertiarySystemFill))
+                .clipShape(Capsule())
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+            }
+        }
+        .animation(AppleMotion.fluidSpring, value: telemetryStore.latestTemperature)
+        .animation(AppleMotion.fluidSpring, value: telemetryStore.connectedRSSI)
+    }
+
+    private func rssiColor(_ rssi: Int) -> Color {
+        if rssi >= -62 { return .green }
+        if rssi >= -78 { return .orange }
+        return .red
+    }
+}
+
+private struct ShoulderPillButton: View, Equatable {
     let slotCode: String
     let assignment: ButtonAssignment
     let isActive: Bool
     let onDown: () -> Void
     let onUp: () -> Void
 
-    @State private var isPressedLocally = false
-
-    private var highlighted: Bool {
-        isPressedLocally || isActive
+    static func == (lhs: ShoulderPillButton, rhs: ShoulderPillButton) -> Bool {
+        lhs.slotCode == rhs.slotCode
+            && lhs.assignment == rhs.assignment
+            && lhs.isActive == rhs.isActive
     }
 
     var body: some View {
         let color = assignment.colorToken.color
+        let capsule = Capsule()
 
-        HStack(spacing: 4) {
-            Image(systemName: assignment.symbolName)
-                .font(.caption.weight(.bold))
-            Text(assignment.label)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .foregroundStyle(highlighted ? .white : color)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .padding(.horizontal, 6)
-        .background(
-            Capsule()
-                .fill(highlighted ? color : color.opacity(0.15))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(color.opacity(0.45), lineWidth: 1.2)
-        )
-        .scaleEffect(isPressedLocally ? 0.94 : 1.0)
-        .animation(.easeOut(duration: 0.1), value: isPressedLocally)
-        .contentShape(Capsule())
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !isPressedLocally {
-                        isPressedLocally = true
-                        onDown()
-                    }
-                }
-                .onEnded { _ in
-                    if isPressedLocally {
-                        isPressedLocally = false
-                        onUp()
-                    }
-                }
-        )
-        .onDisappear {
-            if isPressedLocally {
-                isPressedLocally = false
-                onUp()
+        TactileHoldControl(
+            hitShape: capsule,
+            isActive: isActive,
+            pressedScale: 0.94,
+            onDown: onDown,
+            onUp: onUp
+        ) { highlighted, _ in
+            HStack(spacing: 4) {
+                Image(systemName: assignment.symbolName)
+                    .font(.caption.weight(.bold))
+                Text(assignment.label)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
+            .foregroundStyle(highlighted ? .white : color)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 6)
+            .background(
+                HardwareKeycapBackground(
+                    shape: capsule,
+                    color: color,
+                    highlighted: highlighted
+                )
+            )
         }
         .accessibilityLabel("\(slotCode) \(assignment.label)")
     }
@@ -445,6 +492,7 @@ private struct AnalogSliderCard: View {
     let onChanged: (Double, Bool) -> Void
 
     @State private var localValue: Double
+    @State private var isDragging: Bool = false
 
     init(
         slot: GamepadSlot,
@@ -464,24 +512,64 @@ private struct AnalogSliderCard: View {
         let minVal = Double(min(config.minSliderValue, config.maxSliderValue))
         let maxVal = Double(max(config.minSliderValue + 1, config.maxSliderValue))
         let clamped = min(max(localValue, minVal), maxVal)
+        let roundedInt = Int(clamped.rounded())
+        let restInt = min(max(config.releaseValue, Int(minVal)), Int(maxVal))
         let unitSuffix = (config.actionType == .pinServo) ? "°" : ""
+        let accent = config.colorToken.color
 
         VStack(spacing: 6) {
-            HStack {
-                Label(config.label, systemImage: config.symbolName)
+            HStack(spacing: 6) {
+                Image(systemName: config.symbolName)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(config.colorToken.color)
-                Text("(\(slot.shortCode))")
+                    .foregroundStyle(accent)
+                    .frame(width: 22, height: 22)
+                    .background(accent.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                Text(config.label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                Text("\(slot.shortCode) • P\(config.primaryPin)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+
                 Spacer()
-                Text("\(Int(clamped.rounded()))\(unitSuffix)")
-                    .font(.caption.monospacedDigit().weight(.bold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(config.colorToken.color.opacity(0.15))
-                    .foregroundStyle(config.colorToken.color)
-                    .clipShape(Capsule())
+
+                HStack(spacing: 6) {
+                    if roundedInt != restInt {
+                        Button {
+                            AppHaptics.light()
+                            withAnimation(AppleMotion.fluidSpring) {
+                                localValue = Double(restInt)
+                            }
+                            onChanged(Double(restInt), true)
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 22, height: 22)
+                                .background(Color(.tertiarySystemFill))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.86))
+                        .accessibilityLabel("Réinitialiser \(config.label)")
+                        .transition(.scale(scale: 0.75).combined(with: .opacity))
+                    }
+
+                    Text("\(roundedInt)\(unitSuffix)")
+                        .font(.caption.monospacedDigit().weight(.bold))
+                        .contentTransition(.numericText())
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3)
+                        .background(isDragging ? accent : accent.opacity(0.15))
+                        .foregroundStyle(isDragging ? .white : accent)
+                        .clipShape(Capsule())
+                        .scaleEffect(isDragging ? 1.07 : 1.0)
+                        .animation(AppleMotion.pressSpring, value: isDragging)
+                        .animation(.easeOut(duration: 0.12), value: roundedInt)
+                }
+                .animation(AppleMotion.fluidSpring, value: roundedInt == restInt)
             }
 
             Slider(
@@ -495,18 +583,23 @@ private struct AnalogSliderCard: View {
                 in: minVal...maxVal,
                 step: 1
             ) { editing in
+                withAnimation(AppleMotion.pressSpring) {
+                    isDragging = editing
+                }
                 if !editing {
                     let finalVal = min(max(localValue, minVal), maxVal)
                     onChanged(finalVal, true)
                 }
             }
-            .tint(config.colorToken.color)
+            .tint(accent)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color(.secondarySystemBackground))
+        .appleGroupedCard(cornerRadius: 16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(isDragging ? accent.opacity(0.55) : .clear, lineWidth: 1.5)
+                .animation(AppleMotion.pressSpring, value: isDragging)
         )
         .onChange(of: config) { newConfig in
             let newMin = Double(min(newConfig.minSliderValue, newConfig.maxSliderValue))
@@ -531,9 +624,15 @@ private struct PS4ConnectionGuideSheet: View {
             List {
                 Section("État actuel") {
                     HStack(spacing: 12) {
-                        Image(systemName: viewModel.isPS4Connected ? "gamecontroller.fill" : "gamecontroller")
-                            .font(.title2)
-                            .foregroundStyle(viewModel.isPS4Connected ? Color.green : Color.secondary)
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill((viewModel.isPS4Connected ? Color.green : Color.secondary).opacity(0.14))
+                                .frame(width: 42, height: 42)
+                            Image(systemName: viewModel.isPS4Connected ? "gamecontroller.fill" : "gamecontroller")
+                                .font(.title3)
+                                .foregroundStyle(viewModel.isPS4Connected ? Color.green : Color.secondary)
+                        }
+
                         VStack(alignment: .leading, spacing: 3) {
                             Text(viewModel.isPS4Connected ? viewModel.ps4ControllerName : "Aucune manette PS4 détectée")
                                 .font(.subheadline.weight(.semibold))
@@ -550,6 +649,7 @@ private struct PS4ConnectionGuideSheet: View {
                     }
 
                     Button {
+                        AppHaptics.medium()
                         if viewModel.isPS4Discovering {
                             viewModel.stopPS4Discovery()
                         } else {
@@ -566,6 +666,7 @@ private struct PS4ConnectionGuideSheet: View {
                     }
 
                     Button("Actualiser les manettes connectées") {
+                        AppHaptics.light()
                         viewModel.refreshPS4Controllers()
                     }
                 }
@@ -582,11 +683,14 @@ private struct PS4ConnectionGuideSheet: View {
                         .foregroundStyle(.secondary)
 
                     Button("Configurer les boutons et sticks dans Assigner") {
+                        AppHaptics.selection()
                         dismiss()
                         onOpenMapping()
                     }
                 }
             }
+            .animation(AppleMotion.fluidSpring, value: viewModel.isPS4Connected)
+            .animation(AppleMotion.fluidSpring, value: viewModel.isPS4Discovering)
             .navigationTitle("Manette PS4 Bluetooth")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
