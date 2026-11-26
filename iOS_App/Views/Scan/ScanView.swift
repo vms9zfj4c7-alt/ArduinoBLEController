@@ -4,6 +4,7 @@ import CoreBluetooth
 /// Écran de détection BLE avec radar temps réel calibré selon la distance estimée.
 struct ScanView: View {
     @ObservedObject var viewModel: ScanViewModel
+    @State private var showCompatibilityHelp = false
 
     private var isConnectingSelected: Bool {
         switch viewModel.connectionState {
@@ -137,6 +138,19 @@ struct ScanView: View {
                             .padding(20)
                             .appleGroupedCard(cornerRadius: 18)
                         }
+
+                        Button {
+                            AppHaptics.selection()
+                            showCompatibilityHelp = true
+                        } label: {
+                            Text("Module introuvable ? Compatibilité iPhone (BLE vs Bluetooth 3.0)")
+                                .font(.caption.weight(.medium))
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .frame(maxWidth: 660)
                     .padding(.horizontal, 14)
@@ -191,6 +205,35 @@ struct ScanView: View {
                 }
             } message: {
                 Text(viewModel.errorMessage ?? "")
+            }
+            .sheet(isPresented: $showCompatibilityHelp) {
+                NavigationStack {
+                    List {
+                        Section("Pourquoi certains modules n'apparaissent pas ?") {
+                            Text("Apple autorise uniquement les modules Bluetooth Low Energy (BLE 4.0 / 5.0) sur iPhone. Les modules Bluetooth Classique 2.0 / 3.0 uniquement (ex: Serial Bluetooth v3.01, HC-05, HC-06, SPP-C) sont bloqués par iOS et invisibles dans CoreBluetooth.")
+                                .font(.footnote)
+                        }
+
+                        Section("Modules compatibles iPhone") {
+                            Text("HM-10, AT-09, HC-08, MLT-BT05, JDY-23 / JDY-33 (mode BLE), DX-BT24, Arduino Uno R4 WiFi, Nano 33 BLE et ESP32.")
+                                .font(.footnote)
+                        }
+
+                        Section("Si votre module est double mode (BLE + 3.0)") {
+                            Text("Sélectionnez le filtre Tous ci-dessus, rapprochez l'iPhone à moins d'un mètre et assurez-vous que le module n'est pas déjà connecté à un autre appareil.")
+                                .font(.footnote)
+                        }
+                    }
+                    .navigationTitle("Compatibilité Bluetooth")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Fermer") {
+                                showCompatibilityHelp = false
+                            }
+                        }
+                    }
+                }
             }
         }
     }

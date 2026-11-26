@@ -22,8 +22,10 @@ struct BLEDevice: Identifiable, Equatable {
     let detectedModuleHint: String
 
     private static let arduinoKeywords = [
-        "ARDUINO", "ESP32", "HM-10", "HM10", "HMSOFT", "BT05", "MLT-BT05",
-        "AT-09", "HC-08", "JDY", "DSD", "SH-HC", "CC254", "NANO", "UNO", "MEGA", "ROBOT"
+        "ARDUINO", "ESP32", "HM-10", "HM10", "HMSOFT", "BT05", "BT04", "MLT-BT05",
+        "AT-09", "HC-08", "HC-06", "HC-05", "HC05", "HC06", "JDY", "DX-BT",
+        "FSC-", "FEASYCOM", "DSD", "SH-HC", "CC254", "SERIAL", "UART", "SPP",
+        "V3.0", "NANO", "UNO", "MEGA", "ROBOT"
     ]
 
     init(
@@ -188,6 +190,10 @@ struct BLEDevice: Identifiable, Equatable {
         }
         if serviceUUIDs.contains(BLEProtocolConstants.nordicServiceUUID) {
             return "Nordic UART (NUS)"
+        }
+        if serviceUUIDs.contains(BLEProtocolConstants.genericSerialServiceUUID)
+            || serviceUUIDs.contains(BLEProtocolConstants.isscSerialServiceUUID) {
+            return "Module BLE Série (UART)"
         }
         if upperName.contains("ESP32") { return "ESP32" }
         if upperName.contains("R4") { return "Arduino Uno R4 WiFi" }

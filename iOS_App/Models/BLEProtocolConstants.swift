@@ -17,10 +17,16 @@ enum BLEProtocolConstants {
     static let nordicRXCharacteristicUUID = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
     static let nordicTXCharacteristicUUID = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
 
+    // MARK: - Profils Série génériques / Dual-Mode (BT04-E, DX-BT24, ISSC/BM70, JDY-33)
+    static let genericSerialServiceUUID = CBUUID(string: "FFF0")
+    static let isscSerialServiceUUID = CBUUID(string: "49535343-FE7D-4AE5-8FA9-9FAFD205E455")
+
     static let knownArduinoServiceUUIDs: [CBUUID] = [
         customServiceUUID,
         hm10ServiceUUID,
-        nordicServiceUUID
+        nordicServiceUUID,
+        genericSerialServiceUUID,
+        isscSerialServiceUUID
     ]
 
     /// Services Bluetooth SIG standards (GAP/GATT/Device Info/Battery) ignorés en priorité lors du handshake rapide
