@@ -1,7 +1,7 @@
 import SwiftUI
 import Combine
 
-/// Écran principal de contrôle de l'Arduino façon manette de jeu, adaptatif portrait / paysage.
+/// Écran principal de contrôle de l'Arduino, épuré par défaut (Mode Essentiel) ou complet (14 touches).
 struct ControllerView: View {
     @ObservedObject var viewModel: ControllerViewModel
     let telemetryStore: BLETelemetryStore
@@ -22,13 +22,41 @@ struct ControllerView: View {
                 }
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .animation(AppleMotion.fluidSpring, value: viewModel.isSimplifiedMode)
             .navigationTitle("Manette")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Assigner") {
-                        AppHaptics.selection()
-                        onOpenMapping()
+                    Menu("Options") {
+                        Button(
+                            viewModel.isSimplifiedMode
+                                ? "Mode Complet (14 touches)"
+                                : "Mode Essentiel (7 touches)"
+                        ) {
+                            AppHaptics.selection()
+                            withAnimation(AppleMotion.fluidSpring) {
+                                viewModel.setSimplifiedMode(!viewModel.isSimplifiedMode)
+                            }
+                        }
+
+                        Button("Console BLE") {
+                            AppHaptics.soft()
+                            showConsoleSheet = true
+                        }
+
+                        Button(
+                            viewModel.isPS4Connected
+                                ? "Manette PS4 (\(viewModel.ps4ControllerName))"
+                                : "Manette PS4 Bluetooth"
+                        ) {
+                            AppHaptics.selection()
+                            showPS4GuideSheet = true
+                        }
+
+                        Button("Configurer les boutons") {
+                            AppHaptics.selection()
+                            onOpenMapping()
+                        }
                     }
                     .font(.subheadline.weight(.medium))
                 }
@@ -88,42 +116,203 @@ struct ControllerView: View {
 
     // MARK: - Conteneurs Portrait / Paysage
 
+    @ViewBuilder
     private var portraitContainer: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                statusHeaderCard
-                portraitGamepadLayout
-                LogConsoleView(
-                    logStore: viewModel.logStore,
-                    isConnected: viewModel.connectionState.isConnected,
-                    onSendRawCommand: { viewModel.sendRawCommand($0) },
-                    onClearLogs: { viewModel.clearLogs() }
-                )
+        if viewModel.isSimplifiedMode {
+            ViewThatFits(in: .vertical) {
+                portraitEssentialLayout
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+
+                ScrollView(showsIndicators: false) {
+                    portraitEssentialLayout
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                }
+                .scrollDismissesKeyboard(.interactively)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        } else {
+            ScrollView {
+                VStack(spacing: 14) {
+                    compactStatusCard(showPS4Prompt: true)
+                    portraitFullGamepadLayout
+                    LogConsoleView(
+                        logStore: viewModel.logStore,
+                        isConnected: viewModel.connectionState.isConnected,
+                        onSendRawCommand: { viewModel.sendRawCommand($0) },
+                        onClearLogs: { viewModel.clearLogs() }
+                    )
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .scrollDismissesKeyboard(.interactively)
         }
-        .scrollDismissesKeyboard(.interactively)
     }
 
     private var landscapeContainer: some View {
         ViewThatFits(in: .vertical) {
-            landscapeGamepadCockpit
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+            Group {
+                if viewModel.isSimplifiedMode {
+                    landscapeEssentialCockpit
+                } else {
+                    landscapeFullCockpit
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
 
             ScrollView(showsIndicators: false) {
-                landscapeGamepadCockpit
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
+                Group {
+                    if viewModel.isSimplifiedMode {
+                        landscapeEssentialCockpit
+                    } else {
+                        landscapeFullCockpit
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    // MARK: - En-tête Portrait
+    // MARK: - Mode Essentiel (Portrait : 1 curseur, croix, A, B, STOP)
 
-    private var statusHeaderCard: some View {
+    private var portraitEssentialLayout: some View {
+        VStack(spacing: 16) {
+            compactStatusCard(showPS4Prompt: false)
+
+            sliderCard(for: .sliderLeft, isCompact: false)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    DPadClusterView(
+                        upAssignment: viewModel.assignment(for: .dpadUp),
+                        downAssignment: viewModel.assignment(for: .dpadDown),
+                        leftAssignment: viewModel.assignment(for: .dpadLeft),
+                        rightAssignment: viewModel.assignment(for: .dpadRight),
+                        isUpActive: viewModel.isSlotActive(.dpadUp),
+                        isDownActive: viewModel.isSlotActive(.dpadDown),
+                        isLeftActive: viewModel.isSlotActive(.dpadLeft),
+                        isRightActive: viewModel.isSlotActive(.dpadRight),
+                        buttonSize: 58,
+                        gridSpacing: 7,
+                        containerPadding: 9,
+                        cornerRadius: 15,
+                        onDown: { viewModel.handleButtonDown(slot: $0) },
+                        onUp: { viewModel.handleButtonUp(slot: $0) }
+                    )
+                    .equatable()
+
+                    EssentialActionPod(
+                        slotLetterA: "A",
+                        assignmentA: viewModel.assignment(for: .buttonA),
+                        isActiveA: viewModel.isSlotActive(.buttonA),
+                        slotLetterB: "B",
+                        assignmentB: viewModel.assignment(for: .buttonB),
+                        isActiveB: viewModel.isSlotActive(.buttonB),
+                        includeStopButton: true,
+                        buttonHeight: 60,
+                        onDown: { viewModel.handleButtonDown(slot: $0) },
+                        onUp: { viewModel.handleButtonUp(slot: $0) },
+                        onStop: { viewModel.triggerEmergencyStop() }
+                    )
+                    .equatable()
+                    .frame(maxWidth: .infinity)
+                }
+
+                VStack(spacing: 14) {
+                    portraitDPadCluster
+                    EssentialActionPod(
+                        slotLetterA: "A",
+                        assignmentA: viewModel.assignment(for: .buttonA),
+                        isActiveA: viewModel.isSlotActive(.buttonA),
+                        slotLetterB: "B",
+                        assignmentB: viewModel.assignment(for: .buttonB),
+                        isActiveB: viewModel.isSlotActive(.buttonB),
+                        includeStopButton: true,
+                        buttonHeight: 56,
+                        onDown: { viewModel.handleButtonDown(slot: $0) },
+                        onUp: { viewModel.handleButtonUp(slot: $0) },
+                        onStop: { viewModel.triggerEmergencyStop() }
+                    )
+                    .equatable()
+                }
+            }
+        }
+    }
+
+    // MARK: - Mode Essentiel (Paysage : Cockpit large et aéré)
+
+    private var landscapeEssentialCockpit: some View {
+        VStack(spacing: 10) {
+            compactLandscapeStatusBar
+
+            HStack(alignment: .center, spacing: 14) {
+                DPadClusterView(
+                    upAssignment: viewModel.assignment(for: .dpadUp),
+                    downAssignment: viewModel.assignment(for: .dpadDown),
+                    leftAssignment: viewModel.assignment(for: .dpadLeft),
+                    rightAssignment: viewModel.assignment(for: .dpadRight),
+                    isUpActive: viewModel.isSlotActive(.dpadUp),
+                    isDownActive: viewModel.isSlotActive(.dpadDown),
+                    isLeftActive: viewModel.isSlotActive(.dpadLeft),
+                    isRightActive: viewModel.isSlotActive(.dpadRight),
+                    buttonSize: 54,
+                    gridSpacing: 6,
+                    containerPadding: 9,
+                    cornerRadius: 14,
+                    isCompact: true,
+                    onDown: { viewModel.handleButtonDown(slot: $0) },
+                    onUp: { viewModel.handleButtonUp(slot: $0) }
+                )
+                .equatable()
+
+                VStack(spacing: 12) {
+                    sliderCard(for: .sliderLeft, isCompact: false)
+
+                    Button {
+                        viewModel.triggerEmergencyStop()
+                    } label: {
+                        Text("STOP")
+                            .font(.subheadline.weight(.black))
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .background(
+                                Capsule()
+                                    .fill(Color.red)
+                                    .shadow(color: Color.red.opacity(0.35), radius: 6, y: 2)
+                            )
+                    }
+                    .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.94))
+                }
+                .frame(maxWidth: .infinity)
+
+                EssentialActionPod(
+                    slotLetterA: "A",
+                    assignmentA: viewModel.assignment(for: .buttonA),
+                    isActiveA: viewModel.isSlotActive(.buttonA),
+                    slotLetterB: "B",
+                    assignmentB: viewModel.assignment(for: .buttonB),
+                    isActiveB: viewModel.isSlotActive(.buttonB),
+                    includeStopButton: false,
+                    buttonHeight: 62,
+                    onDown: { viewModel.handleButtonDown(slot: $0) },
+                    onUp: { viewModel.handleButtonUp(slot: $0) },
+                    onStop: { viewModel.triggerEmergencyStop() }
+                )
+                .equatable()
+                .frame(width: 142)
+            }
+        }
+    }
+
+    // MARK: - En-tête Unifié
+
+    private func compactStatusCard(showPS4Prompt: Bool) -> some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
                 LivePulseBeacon(
@@ -138,7 +327,7 @@ struct ControllerView: View {
                         .lineLimit(1)
 
                     HStack(spacing: 6) {
-                        Text(viewModel.boardCapability.boardType.displayName)
+                        Text(viewModel.boardCapability.boardType.shortBadge)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if viewModel.boardCapability.isAutoDetected {
@@ -150,99 +339,103 @@ struct ControllerView: View {
                                 .foregroundStyle(.blue)
                                 .clipShape(Capsule())
                         }
-                    }
-                }
-
-                Spacer()
-
-                TelemetryBadgesView(
-                    telemetryStore: telemetryStore,
-                    onRequestTelemetry: {
-                        AppHaptics.light()
-                        viewModel.requestTelemetry()
-                    }
-                )
-            }
-
-            Divider()
-                .opacity(0.45)
-
-            HStack(spacing: 8) {
-                Button {
-                    AppHaptics.selection()
-                    showPS4GuideSheet = true
-                } label: {
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(viewModel.isPS4Connected ? Color.green : Color.secondary.opacity(0.5))
-                            .frame(width: 7, height: 7)
-                        Text(viewModel.isPS4Connected ? "Manette : \(viewModel.ps4ControllerName)" : "Manette PS4 / Bluetooth")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(viewModel.isPS4Connected ? .primary : .secondary)
-                            .lineLimit(1)
-                        if let battery = viewModel.ps4BatteryPercentage {
-                            Text("\(battery)%")
-                                .font(.caption2.monospacedDigit().weight(.bold))
-                                .contentTransition(.numericText())
+                        if viewModel.isPS4Connected {
+                            Text("PS4")
+                                .font(.caption2.weight(.bold))
                                 .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.green.opacity(0.15))
+                                .padding(.vertical, 1)
+                                .background(Color.green.opacity(0.16))
                                 .foregroundStyle(.green)
                                 .clipShape(Capsule())
                         }
                     }
                 }
-                .buttonStyle(.plain)
 
-                Spacer()
+                Spacer(minLength: 4)
 
-                Button(viewModel.isPS4Connected ? "Détails" : "Connecter PS4") {
-                    AppHaptics.selection()
-                    showPS4GuideSheet = true
-                }
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
-                .buttonStyle(.borderless)
-            }
-            .animation(AppleMotion.fluidSpring, value: viewModel.isPS4Connected)
-
-            if !viewModel.connectionState.isConnected {
-                HStack(spacing: 8) {
-                    Text("Connectez un Arduino pour piloter les broches.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Spacer()
-                    if case .disconnected = viewModel.connectionState,
-                       viewModel.lastConnectedDeviceName != nil {
-                        Button("Reconnecter") {
-                            AppHaptics.medium()
-                            viewModel.reconnectLastDevice()
+                if viewModel.connectionState.isConnected {
+                    TelemetryBadgesView(
+                        telemetryStore: telemetryStore,
+                        onRequestTelemetry: {
+                            AppHaptics.light()
+                            viewModel.requestTelemetry()
+                        }
+                    )
+                } else {
+                    HStack(spacing: 6) {
+                        if case .disconnected = viewModel.connectionState,
+                           viewModel.lastConnectedDeviceName != nil {
+                            Button("Reconnecter") {
+                                AppHaptics.medium()
+                                viewModel.reconnectLastDevice()
+                            }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                        Button("Scanner") {
+                            AppHaptics.selection()
+                            onOpenScan()
                         }
                         .font(.caption.weight(.semibold))
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.borderedProminent)
                         .controlSize(.mini)
                     }
-                    Button("Scanner") {
-                        AppHaptics.selection()
-                        onOpenScan()
-                    }
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            if showPS4Prompt {
+                Divider()
+                    .opacity(0.45)
+
+                HStack(spacing: 8) {
+                    Button {
+                        AppHaptics.selection()
+                        showPS4GuideSheet = true
+                    } label: {
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(viewModel.isPS4Connected ? Color.green : Color.secondary.opacity(0.5))
+                                .frame(width: 7, height: 7)
+                            Text(viewModel.isPS4Connected ? "Manette : \(viewModel.ps4ControllerName)" : "Manette PS4 / Bluetooth")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(viewModel.isPS4Connected ? .primary : .secondary)
+                                .lineLimit(1)
+                            if let battery = viewModel.ps4BatteryPercentage {
+                                Text("\(battery)%")
+                                    .font(.caption2.monospacedDigit().weight(.bold))
+                                    .contentTransition(.numericText())
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.15))
+                                    .foregroundStyle(.green)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    Button(viewModel.isPS4Connected ? "Détails" : "Connecter PS4") {
+                        AppHaptics.selection()
+                        showPS4GuideSheet = true
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .buttonStyle(.borderless)
+                }
             }
         }
         .padding(12)
         .appleGroupedCard(cornerRadius: 18)
-        .clipped()
         .animation(AppleMotion.fluidSpring, value: viewModel.connectionState)
+        .animation(AppleMotion.fluidSpring, value: viewModel.isPS4Connected)
     }
 
-    // MARK: - Disposition Portrait
+    // MARK: - Mode Complet Portrait (14 touches)
 
-    private var portraitGamepadLayout: some View {
+    private var portraitFullGamepadLayout: some View {
         VStack(spacing: 14) {
             HStack(spacing: 8) {
                 ShoulderPillButton(
@@ -302,14 +495,13 @@ struct ControllerView: View {
         }
     }
 
-    // MARK: - Cockpit Ergonomique Paysage (Manette Sans Défilement)
+    // MARK: - Mode Complet Paysage (14 touches)
 
-    private var landscapeGamepadCockpit: some View {
+    private var landscapeFullCockpit: some View {
         VStack(spacing: 6) {
             compactLandscapeStatusBar
 
             HStack(alignment: .center, spacing: 10) {
-                // Zone Pouce Gauche : L1 + Curseur L2 + Croix directionnelle
                 VStack(spacing: 5) {
                     HStack(spacing: 8) {
                         ShoulderPillButton(
@@ -347,7 +539,6 @@ struct ControllerView: View {
                 }
                 .frame(maxWidth: .infinity)
 
-                // Console Centrale Symétrique : Select, Start, STOP, Logs
                 VStack(spacing: 7) {
                     ShoulderPillButton(
                         slotCode: "SEL",
@@ -392,7 +583,6 @@ struct ControllerView: View {
                 }
                 .frame(width: 96)
 
-                // Zone Pouce Droit : Curseur R2 + R1 + Losange A/B/X/Y
                 VStack(spacing: 5) {
                     HStack(spacing: 8) {
                         sliderCard(for: .sliderRight, isCompact: true)
@@ -463,30 +653,32 @@ struct ControllerView: View {
                 }
             )
 
-            Button {
-                AppHaptics.selection()
-                showPS4GuideSheet = true
-            } label: {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(viewModel.isPS4Connected ? Color.green : Color.secondary.opacity(0.45))
-                        .frame(width: 6, height: 6)
-                    if let battery = viewModel.ps4BatteryPercentage {
-                        Text("PS4 \(battery)%")
-                            .monospacedDigit()
-                            .contentTransition(.numericText())
-                    } else {
-                        Text("PS4")
+            if viewModel.isPS4Connected {
+                Button {
+                    AppHaptics.selection()
+                    showPS4GuideSheet = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                        if let battery = viewModel.ps4BatteryPercentage {
+                            Text("PS4 \(battery)%")
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                        } else {
+                            Text("PS4")
+                        }
                     }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(Capsule())
                 }
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(viewModel.isPS4Connected ? .primary : .secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color(.tertiarySystemFill))
-                .clipShape(Capsule())
+                .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.92))
             }
-            .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.92))
 
             if !viewModel.connectionState.isConnected {
                 if case .disconnected = viewModel.connectionState,
@@ -566,6 +758,108 @@ struct ControllerView: View {
         case .scanning, .connecting, .discoveringServices: return .orange
         case .disconnected: return .red
         }
+    }
+}
+
+/// Bloc d'actions simplifié (A, B et bouton STOP optionnel) pour le Mode Essentiel.
+private struct EssentialActionPod: View, Equatable {
+    let slotLetterA: String
+    let assignmentA: ButtonAssignment
+    let isActiveA: Bool
+
+    let slotLetterB: String
+    let assignmentB: ButtonAssignment
+    let isActiveB: Bool
+
+    let includeStopButton: Bool
+    let buttonHeight: CGFloat
+
+    let onDown: (GamepadSlot) -> Void
+    let onUp: (GamepadSlot) -> Void
+    let onStop: () -> Void
+
+    static func == (lhs: EssentialActionPod, rhs: EssentialActionPod) -> Bool {
+        lhs.assignmentA == rhs.assignmentA
+            && lhs.isActiveA == rhs.isActiveA
+            && lhs.assignmentB == rhs.assignmentB
+            && lhs.isActiveB == rhs.isActiveB
+            && lhs.includeStopButton == rhs.includeStopButton
+            && lhs.buttonHeight == rhs.buttonHeight
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            essentialKey(slotCode: slotLetterA, assignment: assignmentA, isActive: isActiveA) {
+                onDown(.buttonA)
+            } onUp: {
+                onUp(.buttonA)
+            }
+
+            essentialKey(slotCode: slotLetterB, assignment: assignmentB, isActive: isActiveB) {
+                onDown(.buttonB)
+            } onUp: {
+                onUp(.buttonB)
+            }
+
+            if includeStopButton {
+                Button(action: onStop) {
+                    Text("STOP")
+                        .font(.subheadline.weight(.black))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                        .background(
+                            Capsule()
+                                .fill(Color.red)
+                                .shadow(color: Color.red.opacity(0.32), radius: 5, y: 2)
+                        )
+                }
+                .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.94))
+            }
+        }
+        .padding(11)
+        .appleGroupedCard(cornerRadius: 26)
+    }
+
+    private func essentialKey(
+        slotCode: String,
+        assignment: ButtonAssignment,
+        isActive: Bool,
+        onDown: @escaping () -> Void,
+        onUp: @escaping () -> Void
+    ) -> some View {
+        let color = assignment.colorToken.color
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+
+        return TactileHoldControl(
+            hitShape: shape,
+            isActive: isActive,
+            pressedScale: 0.93,
+            onDown: onDown,
+            onUp: onUp
+        ) { highlighted, _ in
+            VStack(spacing: 2) {
+                Text(slotCode)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .opacity(highlighted ? 0.85 : 0.72)
+                Text(assignment.label)
+                    .font(.system(size: 14, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(highlighted ? .white : color)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: buttonHeight, alignment: .center)
+            .background(
+                HardwareKeycapBackground(
+                    shape: shape,
+                    color: color,
+                    highlighted: highlighted
+                )
+            )
+        }
+        .accessibilityLabel("\(slotCode) \(assignment.label)")
     }
 }
 
@@ -740,12 +1034,12 @@ private struct AnalogSliderCard: View {
         VStack(spacing: isCompact ? 2 : 6) {
             HStack(spacing: 6) {
                 Text(config.label)
-                    .font(isCompact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
+                    .font(isCompact ? .caption2.weight(.semibold) : .subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
                 if !isCompact {
-                    Text("\(slot.shortCode) • P\(config.primaryPin)")
+                    Text("Pin \(config.primaryPin)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -811,7 +1105,7 @@ private struct AnalogSliderCard: View {
             }
             .tint(accent)
         }
-        .padding(.horizontal, isCompact ? 10 : 12)
+        .padding(.horizontal, isCompact ? 10 : 14)
         .padding(.vertical, isCompact ? 5 : 10)
         .appleGroupedCard(cornerRadius: radius)
         .overlay(

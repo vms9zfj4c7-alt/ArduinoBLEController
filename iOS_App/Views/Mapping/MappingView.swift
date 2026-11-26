@@ -1,27 +1,34 @@
 import SwiftUI
 
-/// Page de configuration permettant d'assigner chaque bouton style manette et d'adapter la carte Arduino.
+/// Page de configuration simplifiée permettant d'assigner les boutons et d'adapter la carte Arduino.
 struct MappingView: View {
     @ObservedObject var viewModel: MappingViewModel
     @State private var didAdaptPinsFeedback = false
     @State private var adaptFeedbackWorkItem: DispatchWorkItem?
 
-    private static let slotGroups: [(title: String, slots: [GamepadSlot])] = [
+    private static let essentialSlotGroups: [(title: String, slots: [GamepadSlot])] = [
+        ("Croix directionnelle", [.dpadUp, .dpadDown, .dpadLeft, .dpadRight]),
+        ("Actions & Curseur", [.buttonA, .buttonB, .sliderLeft])
+    ]
+
+    private static let fullSlotGroups: [(title: String, slots: [GamepadSlot])] = [
         ("Croix directionnelle", [.dpadUp, .dpadDown, .dpadLeft, .dpadRight]),
         ("Boutons d'action", [.buttonA, .buttonB, .buttonX, .buttonY]),
         ("Gâchettes & Système", [.shoulderL1, .shoulderR1, .select, .start]),
         ("Curseurs analogiques", [.sliderLeft, .sliderRight])
     ]
 
+    private var displayedGroups: [(title: String, slots: [GamepadSlot])] {
+        viewModel.isSimplifiedMode ? Self.essentialSlotGroups : Self.fullSlotGroups
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                boardAdaptationSection
-                ps4ControllerSection
-                presetsSection
+                setupAndPresetsSection
                 interactiveGamepadSection
 
-                ForEach(Self.slotGroups, id: \.title) { group in
+                ForEach(displayedGroups, id: \.title) { group in
                     Section(group.title) {
                         ForEach(group.slots) { slot in
                             let assignment = viewModel.assignment(for: slot)
@@ -35,8 +42,11 @@ struct MappingView: View {
                         }
                     }
                 }
+
+                ps4ControllerSection
             }
             .listStyle(.insetGrouped)
+            .animation(AppleMotion.fluidSpring, value: viewModel.isSimplifiedMode)
             .navigationTitle("Assigner Manette")
             .onDisappear {
                 adaptFeedbackWorkItem?.cancel()
@@ -60,8 +70,48 @@ struct MappingView: View {
 
     // MARK: - Sections
 
-    private var boardAdaptationSection: some View {
+    private var setupAndPresetsSection: some View {
         Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Disposition de la manette")
+                    .font(.subheadline.weight(.medium))
+
+                Picker(
+                    "Disposition",
+                    selection: Binding(
+                        get: { viewModel.isSimplifiedMode },
+                        set: { enabled in
+                            AppHaptics.selection()
+                            withAnimation(AppleMotion.fluidSpring) {
+                                viewModel.setSimplifiedMode(enabled)
+                            }
+                        }
+                    )
+                ) {
+                    Text("Essentiel (7)").tag(true)
+                    Text("Complet (14)").tag(false)
+                }
+                .pickerStyle(.segmented)
+            }
+            .padding(.vertical, 4)
+
+            Picker(
+                "Modèle rapide",
+                selection: Binding(
+                    get: { viewModel.activePreset },
+                    set: { preset in
+                        AppHaptics.medium()
+                        withAnimation(AppleMotion.fluidSpring) {
+                            viewModel.applyPreset(preset)
+                        }
+                    }
+                )
+            ) {
+                ForEach(BuiltInPresetKind.allCases) { preset in
+                    Text(preset.title).tag(preset)
+                }
+            }
+
             Picker(
                 "Profil Arduino",
                 selection: Binding(
@@ -79,94 +129,120 @@ struct MappingView: View {
                 }
             }
 
-            HStack {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Carte active")
+                    Text(viewModel.boardCapability.boardType.displayName)
                         .font(.subheadline.weight(.medium))
                     HStack(spacing: 4) {
-                        Text(viewModel.boardCapability.boardType.displayName)
-                        Text("•")
                         Text("\(viewModel.boardCapability.availablePins.count)")
                             .monospacedDigit()
                             .contentTransition(.numericText())
                         Text("broches")
+                        Text("•")
+                        Text(viewModel.boardCapability.isAutoDetected ? "Auto" : "Manuel")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
+
                 Spacer()
-                Text(viewModel.boardCapability.isAutoDetected ? "Auto" : "Manuel")
-                    .font(.caption2.weight(.bold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.accentColor.opacity(0.15))
-                    .foregroundStyle(Color.accentColor)
-                    .clipShape(Capsule())
+
+                Button {
+                    triggerAdaptWithFeedback()
+                } label: {
+                    Text(didAdaptPinsFeedback ? "Adapté" : "Réadapter")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background((didAdaptPinsFeedback ? Color.green : Color.accentColor).opacity(0.15))
+                        .foregroundStyle(didAdaptPinsFeedback ? Color.green : Color.accentColor)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.borderless)
             }
             .animation(AppleMotion.fluidSpring, value: viewModel.boardCapability)
-
-            Button {
-                triggerAdaptWithFeedback()
-            } label: {
-                HStack {
-                    Text("Réadapter automatiquement les broches")
-                        .font(.subheadline.weight(.medium))
-                    Spacer()
-                    if didAdaptPinsFeedback {
-                        Text("Adapté")
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.green.opacity(0.16))
-                            .foregroundStyle(.green)
-                            .clipShape(Capsule())
-                            .transition(.scale(scale: 0.7).combined(with: .opacity))
-                    }
-                }
-                .contentShape(Rectangle())
-            }
             .animation(AppleMotion.fluidSpring, value: didAdaptPinsFeedback)
         } header: {
-            Text("Adaptation à la carte Arduino")
+            Text("Configuration rapide")
         } footer: {
-            Text("En mode Auto-détection, l'application interroge l'Arduino à la connexion et ajuste les broches disponibles (Uno + HM-10, Uno R4 WiFi, Nano 33 BLE, ESP32, Mega).")
+            Text("Le mode Essentiel limite l'écran aux commandes principales (croix, A, B, STOP et curseur). Le mode Complet affiche les 14 boutons.")
         }
     }
 
-    private var presetsSection: some View {
-        Section("Modèles prêts à l'emploi") {
-            ForEach(BuiltInPresetKind.allCases) { preset in
-                Button {
-                    AppHaptics.medium()
-                    withAnimation(AppleMotion.fluidSpring) {
-                        viewModel.applyPreset(preset)
-                    }
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(preset.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                            Text(preset.subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+    private var interactiveGamepadSection: some View {
+        Section {
+            if viewModel.isSimplifiedMode {
+                VStack(spacing: 12) {
+                    miniWideBar(.sliderLeft)
+
+                    HStack(alignment: .center, spacing: 14) {
+                        VStack(spacing: 4) {
+                            miniSquareButton(.dpadUp)
+                            HStack(spacing: 4) {
+                                miniSquareButton(.dpadLeft)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color(.tertiarySystemFill))
+                                    .frame(width: 34, height: 34)
+                                miniSquareButton(.dpadRight)
+                            }
+                            miniSquareButton(.dpadDown)
                         }
-                        Spacer()
-                        if viewModel.activePreset == preset {
-                            Text("Actif")
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color.accentColor.opacity(0.16))
-                                .foregroundStyle(Color.accentColor)
-                                .clipShape(Capsule())
-                                .transition(.scale(scale: 0.7).combined(with: .opacity))
+
+                        Spacer(minLength: 8)
+
+                        VStack(spacing: 8) {
+                            miniWideActionButton(.buttonA)
+                            miniWideActionButton(.buttonB)
                         }
+                        .frame(maxWidth: 126)
                     }
-                    .contentShape(Rectangle())
                 }
-                .animation(AppleMotion.fluidSpring, value: viewModel.activePreset)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
+            } else {
+                VStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        miniSlotPill(.shoulderL1)
+                        miniSlotPill(.sliderLeft)
+                        miniSlotPill(.select)
+                        miniSlotPill(.start)
+                        miniSlotPill(.sliderRight)
+                        miniSlotPill(.shoulderR1)
+                    }
+
+                    HStack(alignment: .center, spacing: 14) {
+                        VStack(spacing: 4) {
+                            miniSquareButton(.dpadUp)
+                            HStack(spacing: 4) {
+                                miniSquareButton(.dpadLeft)
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color(.tertiarySystemFill))
+                                    .frame(width: 34, height: 34)
+                                miniSquareButton(.dpadRight)
+                            }
+                            miniSquareButton(.dpadDown)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        VStack(spacing: 2) {
+                            miniCircleButton(.buttonY)
+                            HStack(spacing: 24) {
+                                miniCircleButton(.buttonX)
+                                miniCircleButton(.buttonB)
+                            }
+                            miniCircleButton(.buttonA)
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
             }
+        } header: {
+            Text("Touchez un bouton à modifier")
         }
     }
 
@@ -234,58 +310,7 @@ struct MappingView: View {
                 )
             )
         } header: {
-            Text("Manette PS4 / DualShock 4 Bluetooth")
-        } footer: {
-            Text("Les touches de la manette PS4 (Croix, Rond, Carré, Triangle, L1/R1, L2/R2, Share, Options et croix directionnelle) utilisent directement les assignations ci-dessous.")
-        }
-    }
-
-    private var interactiveGamepadSection: some View {
-        Section {
-            VStack(spacing: 12) {
-                // Rangée haute : gâchettes et curseurs
-                HStack(spacing: 6) {
-                    miniSlotPill(.shoulderL1)
-                    miniSlotPill(.sliderLeft)
-                    miniSlotPill(.select)
-                    miniSlotPill(.start)
-                    miniSlotPill(.sliderRight)
-                    miniSlotPill(.shoulderR1)
-                }
-
-                HStack(alignment: .center, spacing: 14) {
-                    // Mini D-Pad visuel centré
-                    VStack(spacing: 4) {
-                        miniSquareButton(.dpadUp)
-                        HStack(spacing: 4) {
-                            miniSquareButton(.dpadLeft)
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Color(.tertiarySystemFill))
-                                .frame(width: 34, height: 34)
-                            miniSquareButton(.dpadRight)
-                        }
-                        miniSquareButton(.dpadDown)
-                    }
-
-                    Spacer(minLength: 4)
-
-                    // Mini losange A/B/X/Y centré
-                    VStack(spacing: 2) {
-                        miniCircleButton(.buttonY)
-                        HStack(spacing: 24) {
-                            miniCircleButton(.buttonX)
-                            miniCircleButton(.buttonB)
-                        }
-                        miniCircleButton(.buttonA)
-                    }
-                }
-                .padding(.horizontal, 4)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
-        } header: {
-            Text("Manette interactive (touchez un bouton à configurer)")
+            Text("Manette PS4 Bluetooth")
         }
     }
 
@@ -303,6 +328,64 @@ struct MappingView: View {
         }
         adaptFeedbackWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: item)
+    }
+
+    private func miniWideBar(_ slot: GamepadSlot) -> some View {
+        let config = viewModel.assignment(for: slot)
+        let color = config.colorToken.color
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return Button {
+            AppHaptics.selection()
+            viewModel.selectedSlotForEditing = slot
+        } label: {
+            HStack {
+                Text(config.label)
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(config.summaryPinBadge)
+                    .font(.caption2.weight(.bold))
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(color.opacity(0.14))
+            .overlay(
+                shape.strokeBorder(color.opacity(0.45), lineWidth: 1)
+            )
+            .clipShape(shape)
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private func miniWideActionButton(_ slot: GamepadSlot) -> some View {
+        let config = viewModel.assignment(for: slot)
+        let color = config.colorToken.color
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return Button {
+            AppHaptics.selection()
+            viewModel.selectedSlotForEditing = slot
+        } label: {
+            VStack(spacing: 2) {
+                Text("\(slot.shortCode) • \(config.label)")
+                    .font(.caption.weight(.bold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Text(config.summaryPinBadge)
+                    .font(.system(size: 9, weight: .semibold))
+                    .opacity(0.8)
+            }
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .padding(.horizontal, 8)
+            .background(color.opacity(0.15))
+            .overlay(
+                shape.strokeBorder(color.opacity(0.5), lineWidth: 1.1)
+            )
+            .clipShape(shape)
+        }
+        .buttonStyle(.borderless)
     }
 
     private func miniSlotPill(_ slot: GamepadSlot) -> some View {
@@ -421,10 +504,6 @@ private struct AssignmentRowView: View {
                 Text(assignment.summaryDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                Text(slot.ps4Hint)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
 
             Spacer()

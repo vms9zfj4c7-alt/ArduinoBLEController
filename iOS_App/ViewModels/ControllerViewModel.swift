@@ -20,6 +20,7 @@ final class ControllerViewModel: ObservableObject {
     @Published private(set) var assignments: [GamepadSlot: ButtonAssignment] = [:]
     // Publié uniquement pour les boutons interrupteurs (toggle) afin d'éviter des re-rendus inutiles
     @Published private(set) var toggledStates: [GamepadSlot: Bool] = [:]
+    @Published private(set) var isSimplifiedMode: Bool = true
 
     var logStore: BLELogStore { bleManager.logStore }
     var telemetryStore: BLETelemetryStore { bleManager.telemetryStore }
@@ -57,6 +58,7 @@ final class ControllerViewModel: ObservableObject {
         self.ps4Manager = ps4Manager
         self.boardCapability = bleManager.detectedBoardCapability
         self.assignments = storageService.assignments
+        self.isSimplifiedMode = storageService.isSimplifiedMode
 
         rebuildCommandCache(with: storageService.assignments)
         syncSliderRanges(with: storageService.assignments)
@@ -237,6 +239,10 @@ final class ControllerViewModel: ObservableObject {
         ps4Manager.refreshConnectedControllers()
     }
 
+    func setSimplifiedMode(_ enabled: Bool) {
+        storageService.setSimplifiedMode(enabled)
+    }
+
     /// Sécurise les sorties momentanées et met le BLE en veille lors du passage en arrière-plan.
     func handleAppLifecycle(isActive: Bool) {
         if isActive {
@@ -318,6 +324,10 @@ final class ControllerViewModel: ObservableObject {
                 self?.ps4Manager.useRightStickAsSliders = enabled
             }
             .store(in: &cancellables)
+
+        storageService.$isSimplifiedMode
+            .removeDuplicates()
+            .assign(to: &$isSimplifiedMode)
     }
 
     private func bindPS4Controller() {

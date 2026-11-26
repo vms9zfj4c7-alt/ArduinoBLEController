@@ -14,6 +14,7 @@ final class MappingViewModel: ObservableObject {
     @Published private(set) var ps4BatteryPercentage: Int?
     @Published private(set) var ps4LeftStickAsDPad: Bool
     @Published private(set) var ps4RightStickAsSliders: Bool
+    @Published private(set) var isSimplifiedMode: Bool
 
     @Published var selectedSlotForEditing: GamepadSlot?
 
@@ -35,6 +36,7 @@ final class MappingViewModel: ObservableObject {
         self.assignments = storageService.assignments
         self.ps4LeftStickAsDPad = storageService.ps4LeftStickAsDPad
         self.ps4RightStickAsSliders = storageService.ps4RightStickAsSliders
+        self.isSimplifiedMode = storageService.isSimplifiedMode
 
         // Applique au démarrage la préférence enregistrée au gestionnaire BLE
         bleManager.setManualBoardOverride(storageService.selectedBoardPreference)
@@ -67,6 +69,10 @@ final class MappingViewModel: ObservableObject {
         storageService.$ps4RightStickAsSliders
             .removeDuplicates()
             .assign(to: &$ps4RightStickAsSliders)
+
+        storageService.$isSimplifiedMode
+            .removeDuplicates()
+            .assign(to: &$isSimplifiedMode)
 
         ps4Manager.$isConnected
             .removeDuplicates()
@@ -108,6 +114,10 @@ final class MappingViewModel: ObservableObject {
 
     func refreshPS4Controllers() {
         ps4Manager.refreshConnectedControllers()
+    }
+
+    func setSimplifiedMode(_ enabled: Bool) {
+        storageService.setSimplifiedMode(enabled)
     }
 
     func saveAssignment(_ updated: ButtonAssignment) {

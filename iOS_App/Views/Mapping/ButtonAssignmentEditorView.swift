@@ -166,17 +166,43 @@ struct ButtonAssignmentEditorView: View {
         Section("Apparence sur la manette") {
             TextField("Nom affiché", text: $draft.label)
 
-            Picker("Couleur", selection: $draft.colorToken) {
-                ForEach(ControllerColorToken.allCases) { token in
-                    HStack {
-                        Circle()
-                            .fill(token.color)
-                            .frame(width: 14, height: 14)
-                        Text(token.displayName)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Couleur")
+                        .font(.subheadline)
+                    Spacer()
+                    Text(draft.colorToken.displayName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 0) {
+                    ForEach(ControllerColorToken.allCases) { token in
+                        let isSelected = (draft.colorToken == token)
+                        Button {
+                            AppHaptics.selection()
+                            withAnimation(AppleMotion.pressSpring) {
+                                draft.colorToken = token
+                            }
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(token.color)
+                                    .frame(width: 24, height: 24)
+                                if isSelected {
+                                    Circle()
+                                        .strokeBorder(Color.primary, lineWidth: 2.2)
+                                        .frame(width: 30, height: 30)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 32)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(token.displayName)
                     }
-                    .tag(token)
                 }
             }
+            .padding(.vertical, 4)
         }
     }
 
@@ -332,12 +358,18 @@ struct ButtonAssignmentEditorView: View {
     private var behaviorSection: some View {
         Section {
             Picker("Mode d'appui", selection: $draft.behavior) {
-                ForEach(ButtonBehavior.allCases) { mode in
-                    Text(mode.displayName).tag(mode)
-                }
+                Text("Maintenu").tag(ButtonBehavior.momentary)
+                Text("ON / OFF").tag(ButtonBehavior.toggle)
+                Text("Impulsion").tag(ButtonBehavior.push)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: draft.behavior) { _ in
+                AppHaptics.selection()
             }
         } header: {
             Text("Comportement du bouton")
+        } footer: {
+            Text(draft.behavior.displayName)
         }
     }
 

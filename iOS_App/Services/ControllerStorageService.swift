@@ -9,6 +9,7 @@ final class ControllerStorageService: ObservableObject {
     @Published var hasCustomEdits: Bool
     @Published var ps4LeftStickAsDPad: Bool
     @Published var ps4RightStickAsSliders: Bool
+    @Published var isSimplifiedMode: Bool
 
     private let assignmentsKey = "arduino_ble_controller_assignments_v1"
     private let boardPreferenceKey = "arduino_ble_board_preference_v1"
@@ -16,6 +17,7 @@ final class ControllerStorageService: ObservableObject {
     private let customEditsKey = "arduino_ble_has_custom_edits_v1"
     private let ps4LeftStickKey = "arduino_ble_ps4_left_stick_dpad_v1"
     private let ps4RightStickKey = "arduino_ble_ps4_right_stick_sliders_v1"
+    private let simplifiedModeKey = "arduino_ble_simplified_mode_v1"
 
     private let defaults: UserDefaults
     private static let jsonEncoder = JSONEncoder()
@@ -37,6 +39,9 @@ final class ControllerStorageService: ObservableObject {
             ? true
             : defaults.bool(forKey: ps4LeftStickKey)
         self.ps4RightStickAsSliders = defaults.bool(forKey: ps4RightStickKey)
+        self.isSimplifiedMode = (defaults.object(forKey: simplifiedModeKey) == nil)
+            ? true
+            : defaults.bool(forKey: simplifiedModeKey)
 
         let defaultCap = ArduinoBoardCapability.defaultCapability(
             for: savedBoard == .auto ? .unoR4WiFi : savedBoard,
@@ -103,6 +108,12 @@ final class ControllerStorageService: ObservableObject {
         ps4RightStickAsSliders = rightStickAsSliders
         defaults.set(leftStickAsDPad, forKey: ps4LeftStickKey)
         defaults.set(rightStickAsSliders, forKey: ps4RightStickKey)
+    }
+
+    func setSimplifiedMode(_ enabled: Bool) {
+        guard isSimplifiedMode != enabled else { return }
+        isSimplifiedMode = enabled
+        defaults.set(enabled, forKey: simplifiedModeKey)
     }
 
     private func persistAll() {

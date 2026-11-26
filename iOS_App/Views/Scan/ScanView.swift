@@ -1,7 +1,7 @@
 import SwiftUI
 import CoreBluetooth
 
-/// Écran de scan et de connexion aux périphériques Arduino Bluetooth Low Energy.
+/// Écran de scan et de connexion simplifié aux périphériques Arduino Bluetooth Low Energy.
 struct ScanView: View {
     @ObservedObject var viewModel: ScanViewModel
 
@@ -18,15 +18,16 @@ struct ScanView: View {
 
                 List {
                     Section {
-                        Toggle("Masquer les balises sans nom", isOn: $viewModel.hideUnnamedBeacons)
-                            .onChange(of: viewModel.hideUnnamedBeacons) { _ in
-                                AppHaptics.light()
+                        Picker("Filtre", selection: $viewModel.filterMode) {
+                            ForEach(ScanViewModel.FilterMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
                             }
-
-                        Toggle("Afficher uniquement les cartes Arduino / BLE", isOn: $viewModel.showOnlyArduinoDevices)
-                            .onChange(of: viewModel.showOnlyArduinoDevices) { _ in
-                                AppHaptics.light()
-                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .listRowInsets(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14))
+                        .onChange(of: viewModel.filterMode) { _ in
+                            AppHaptics.selection()
+                        }
 
                         if case .disconnected = viewModel.connectionState,
                            let lastName = viewModel.lastConnectedDeviceName {
@@ -96,6 +97,17 @@ struct ScanView: View {
                 }
             }
             .navigationTitle("Scanner BLE")
+            .onAppear {
+                viewModel.startAutoScanIfNeeded()
+            }
+            .onChange(of: viewModel.bluetoothState) { newState in
+                if newState == .poweredOn {
+                    viewModel.startAutoScanIfNeeded()
+                }
+            }
+            .onDisappear {
+                viewModel.stopScanIfActive()
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -193,7 +205,7 @@ struct ScanView: View {
                 Text(viewModel.isScanning ? "Recherche d'appareils Arduino BLE..." : "Aucun appareil détecté")
                     .font(.headline)
                     .multilineTextAlignment(.center)
-                Text("Vérifiez que la carte Arduino est alimentée et que le sketch BLE est téléversé, puis appuyez sur Scanner.")
+                Text("Allumez votre carte Arduino puis touchez son nom pour vous connecter.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

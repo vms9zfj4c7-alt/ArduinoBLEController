@@ -4,8 +4,23 @@ import Combine
 
 /// ViewModel gérant l'écran de scan et de connexion aux cartes Arduino BLE.
 final class ScanViewModel: ObservableObject {
-    @Published var showOnlyArduinoDevices: Bool = false
-    @Published var hideUnnamedBeacons: Bool = true
+    enum FilterMode: Int, CaseIterable, Identifiable {
+        case namedOnly
+        case arduinoOnly
+        case all
+
+        var id: Int { rawValue }
+
+        var title: String {
+            switch self {
+            case .namedOnly: return "Nommés"
+            case .arduinoOnly: return "Arduino"
+            case .all: return "Tous"
+            }
+        }
+    }
+
+    @Published var filterMode: FilterMode = .namedOnly
     @Published var searchText: String = ""
 
     @Published private(set) var filteredDevices: [BLEDevice] = []
@@ -15,25 +30,30 @@ final class ScanViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let bleManager: BLEManager
+    private var didAutoScanOnLaunch = false
 
     init(bleManager: BLEManager) {
         self.bleManager = bleManager
 
-        Publishers.CombineLatest4(
+        Publishers.CombineLatest3(
             bleManager.$discoveredDevices,
-            $showOnlyArduinoDevices,
-            $hideUnnamedBeacons,
+            $filterMode,
             $searchText
         )
-        .map { devices, onlyArduino, hideUnnamed, rawQuery in
+        .map { devices, mode, rawQuery in
             let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
             return devices.filter { device in
-                if onlyArduino && !device.isLikelyArduino {
-                    return false
-                }
-                if hideUnnamed && !device.hasResolvedName && !device.isLikelyArduino {
-                    // Masquer les balises anonymes (Apple Continuity, AirTag, etc.) sans nom
-                    return false
+                switch mode {
+                case .namedOnly:
+                    if !device.hasResolvedName && !device.isLikelyArduino {
+                        return false
+                    }
+                case .arduinoOnly:
+                    if !device.isLikelyArduino {
+                        return false
+                    }
+                case .all:
+                    break
                 }
                 if query.isEmpty { return true }
                 return device.displayName.localizedCaseInsensitiveContains(query)
@@ -71,6 +91,20 @@ final class ScanViewModel: ObservableObject {
             bleManager.stopScan()
         } else {
             bleManager.startScan()
+        }
+    }
+
+    func startAutoScanIfNeeded() {
+        guard !didAutoScanOnLaunch,
+              bluetoothState == .poweredOn,
+              case .disconnected = connectionState else { return }
+        didAutoScanOnLaunch = true
+        bleManager.startScan()
+    }
+
+    func stopScanIfActive() {
+        if isScanning {
+            bleManager.stopScan()
         }
     }
 
