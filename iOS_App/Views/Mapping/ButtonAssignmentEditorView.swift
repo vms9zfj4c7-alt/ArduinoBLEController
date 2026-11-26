@@ -11,14 +11,6 @@ struct ButtonAssignmentEditorView: View {
     @State private var draft: ButtonAssignment
     @State private var previewPressed = false
 
-    private static let curatedSymbols: [String] = [
-        "arrow.up", "arrow.down", "arrow.left", "arrow.right",
-        "lightbulb.fill", "lightbulb.circle.fill", "flashlight.on.fill", "bolt.fill",
-        "speaker.wave.3.fill", "rotate.right.fill", "hand.raised.fill", "speedometer",
-        "slider.horizontal.3", "scope", "stop.circle.fill", "wave.3.right"
-    ]
-    private static let symbolGridColumns = Array(repeating: GridItem(.flexible()), count: 8)
-
     init(
         assignment: ButtonAssignment,
         boardCapability: ArduinoBoardCapability,
@@ -97,7 +89,8 @@ struct ButtonAssignmentEditorView: View {
 
     private var livePreviewSection: some View {
         let color = draft.colorToken.color
-        let title = draft.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? draft.id.shortCode : draft.label
+        let rawLabel = draft.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = rawLabel.isEmpty ? draft.id.shortCode : rawLabel
 
         return Section {
             HStack(spacing: 14) {
@@ -113,17 +106,18 @@ struct ButtonAssignmentEditorView: View {
                     }
                 } label: {
                     let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    VStack(spacing: 3) {
-                        Image(systemName: draft.symbolName)
-                            .font(.system(size: 20, weight: .bold))
+                    VStack(spacing: 2) {
+                        Text(draft.id.shortCode)
+                            .font(.system(size: 16, weight: .black, design: .rounded))
                         Text(title)
                             .font(.system(size: 10, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                            .padding(.horizontal, 4)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.68)
                     }
                     .foregroundStyle(previewPressed ? .white : color)
-                    .frame(width: 68, height: 68)
+                    .padding(.horizontal, 5)
+                    .frame(width: 68, height: 68, alignment: .center)
                     .background(
                         HardwareKeycapBackground(
                             shape: shape,
@@ -162,7 +156,6 @@ struct ButtonAssignmentEditorView: View {
             }
             .padding(.vertical, 4)
             .animation(AppleMotion.fluidSpring, value: draft.colorToken)
-            .animation(AppleMotion.fluidSpring, value: draft.symbolName)
             .animation(AppleMotion.fluidSpring, value: draft.label)
         } header: {
             Text("Aperçu sur la manette")
@@ -184,39 +177,6 @@ struct ButtonAssignmentEditorView: View {
                     .tag(token)
                 }
             }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Icône")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                LazyVGrid(columns: Self.symbolGridColumns, spacing: 10) {
-                    ForEach(Self.curatedSymbols, id: \.self) { symbol in
-                        let selected = (draft.symbolName == symbol)
-                        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        Button {
-                            AppHaptics.selection()
-                            withAnimation(AppleMotion.pressSpring) {
-                                draft.symbolName = symbol
-                            }
-                        } label: {
-                            Image(systemName: symbol)
-                                .font(.body)
-                                .frame(width: 34, height: 34)
-                                .foregroundStyle(selected ? .white : draft.colorToken.color)
-                                .background(selected ? draft.colorToken.color : draft.colorToken.color.opacity(0.14))
-                                .clipShape(shape)
-                                .scaleEffect(selected ? 1.07 : 1.0)
-                                .shadow(
-                                    color: selected ? draft.colorToken.color.opacity(0.35) : .clear,
-                                    radius: 4,
-                                    y: 2
-                                )
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                }
-            }
-            .padding(.vertical, 4)
         }
     }
 
@@ -320,7 +280,7 @@ struct ButtonAssignmentEditorView: View {
                     }
                 }
 
-                Button {
+                Button("Ajouter une broche") {
                     AppHaptics.light()
                     let defaultPin = boardCapability.availablePins.first?.number ?? draft.primaryPin
                     withAnimation(AppleMotion.fluidSpring) {
@@ -328,8 +288,6 @@ struct ButtonAssignmentEditorView: View {
                             PinTarget(pin: defaultPin, signalKind: .digital, activeValue: 1, releaseValue: 0)
                         )
                     }
-                } label: {
-                    Label("Ajouter une broche", systemImage: "plus.circle.fill")
                 }
             } header: {
                 Text("Broches pilotées simultanément")
@@ -390,7 +348,7 @@ struct ButtonAssignmentEditorView: View {
                     AppHaptics.medium()
                     onTest(draft, true)
                 } label: {
-                    Label("Tester Actif", systemImage: "play.fill")
+                    Text("Tester Actif")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -401,7 +359,7 @@ struct ButtonAssignmentEditorView: View {
                         AppHaptics.light()
                         onTest(draft, false)
                     } label: {
-                        Label("Tester Repos", systemImage: "stop.fill")
+                        Text("Tester Repos")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)

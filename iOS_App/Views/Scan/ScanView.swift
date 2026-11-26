@@ -35,7 +35,7 @@ struct ScanView: View {
                                 viewModel.reconnectLastDevice()
                             } label: {
                                 HStack {
-                                    Label("Reconnecter : \(lastName)", systemImage: "bolt.horizontal.circle.fill")
+                                    Text("Reconnecter : \(lastName)")
                                         .font(.subheadline.weight(.semibold))
                                     Spacer()
                                     Text("Rapide")
@@ -45,6 +45,7 @@ struct ScanView: View {
                                         .background(Color.accentColor.opacity(0.14))
                                         .clipShape(Capsule())
                                 }
+                                .contentShape(Rectangle())
                             }
                         }
                     }
@@ -101,11 +102,8 @@ struct ScanView: View {
                         AppHaptics.medium()
                         viewModel.toggleScan()
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: viewModel.isScanning ? "stop.circle.fill" : "antenna.radiowaves.left.and.right")
-                            Text(viewModel.isScanning ? "Stop" : "Scanner")
-                        }
-                        .font(.subheadline.weight(.semibold))
+                        Text(viewModel.isScanning ? "Stop" : "Scanner")
+                            .font(.subheadline.weight(.semibold))
                     }
                     .tint(viewModel.isScanning ? .red : .accentColor)
                     .animation(AppleMotion.pressSpring, value: viewModel.isScanning)
@@ -130,18 +128,15 @@ struct ScanView: View {
     @ViewBuilder
     private var bluetoothStateBanner: some View {
         if viewModel.bluetoothState != .poweredOn && viewModel.bluetoothState != .unknown {
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.white)
-                Text(bluetoothStatusMessage)
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.white)
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color.orange)
-            .transition(.move(edge: .top).combined(with: .opacity))
+            Text(bluetoothStatusMessage)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.orange)
+                .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -197,16 +192,15 @@ struct ScanView: View {
             } else {
                 Text(viewModel.isScanning ? "Recherche d'appareils Arduino BLE..." : "Aucun appareil détecté")
                     .font(.headline)
+                    .multilineTextAlignment(.center)
                 Text("Vérifiez que la carte Arduino est alimentée et que le sketch BLE est téléversé, puis appuyez sur Scanner.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 if !viewModel.isScanning {
-                    Button {
+                    Button("Lancer le scan") {
                         AppHaptics.medium()
                         viewModel.toggleScan()
-                    } label: {
-                        Label("Lancer le scan", systemImage: "antenna.radiowaves.left.and.right")
                     }
                     .buttonStyle(.borderedProminent)
                     .padding(.top, 2)
@@ -240,7 +234,7 @@ struct ScanView: View {
     }
 }
 
-/// Illustration radar iOS pour l'état vide du scanner BLE.
+/// Indicateur radar géométrique sans icône pour l'état vide du scanner BLE.
 private struct RadarScanBadge: View {
     let isScanning: Bool
 
@@ -253,13 +247,17 @@ private struct RadarScanBadge: View {
 
             Circle()
                 .fill(isScanning ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.10))
-                .frame(width: 68, height: 68)
+                .frame(width: 60, height: 60)
 
-            Image(systemName: isScanning ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right")
-                .font(.system(size: 30, weight: .medium))
-                .foregroundStyle(isScanning ? Color.accentColor : Color.secondary)
+            Circle()
+                .strokeBorder(isScanning ? Color.accentColor.opacity(0.35) : Color.secondary.opacity(0.25), lineWidth: 1.5)
+                .frame(width: 36, height: 36)
+
+            Circle()
+                .fill(isScanning ? Color.accentColor : Color.secondary.opacity(0.55))
+                .frame(width: 12, height: 12)
         }
-        .frame(width: 112, height: 92)
+        .frame(width: 108, height: 86)
         .animation(AppleMotion.fluidSpring, value: isScanning)
     }
 }
@@ -271,7 +269,7 @@ private struct RadarWaveRing: View {
     var body: some View {
         Circle()
             .stroke(Color.accentColor.opacity(expanded ? 0.0 : 0.45), lineWidth: 1.8)
-            .frame(width: 68, height: 68)
+            .frame(width: 60, height: 60)
             .scaleEffect(expanded ? 1.75 : 1.0)
             .onAppear {
                 expanded = false
@@ -298,8 +296,8 @@ private struct DeviceRowView: View, Equatable {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(device.isLikelyArduino ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
                         .frame(width: 44, height: 44)
-                    Image(systemName: device.isLikelyArduino ? "cpu.fill" : "wave.3.right")
-                        .font(.title3)
+                    Text(device.isLikelyArduino ? "ARD" : "BLE")
+                        .font(.caption.weight(.black))
                         .foregroundStyle(device.isLikelyArduino ? Color.accentColor : Color.secondary)
                 }
 

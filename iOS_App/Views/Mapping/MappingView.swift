@@ -109,14 +109,21 @@ struct MappingView: View {
                 triggerAdaptWithFeedback()
             } label: {
                 HStack {
-                    Label("Réadapter automatiquement les broches", systemImage: "wand.and.stars")
+                    Text("Réadapter automatiquement les broches")
+                        .font(.subheadline.weight(.medium))
                     Spacer()
                     if didAdaptPinsFeedback {
-                        Image(systemName: "checkmark.circle.fill")
+                        Text("Adapté")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.green.opacity(0.16))
                             .foregroundStyle(.green)
+                            .clipShape(Capsule())
                             .transition(.scale(scale: 0.7).combined(with: .opacity))
                     }
                 }
+                .contentShape(Rectangle())
             }
             .animation(AppleMotion.fluidSpring, value: didAdaptPinsFeedback)
         } header: {
@@ -146,9 +153,14 @@ struct MappingView: View {
                         }
                         Spacer()
                         if viewModel.activePreset == preset {
-                            Image(systemName: "checkmark.circle.fill")
+                            Text("Actif")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.16))
                                 .foregroundStyle(Color.accentColor)
-                                .transition(.scale(scale: 0.65).combined(with: .opacity))
+                                .clipShape(Capsule())
+                                .transition(.scale(scale: 0.7).combined(with: .opacity))
                         }
                     }
                     .contentShape(Rectangle())
@@ -161,8 +173,10 @@ struct MappingView: View {
     private var ps4ControllerSection: some View {
         Section {
             HStack(spacing: 10) {
-                Image(systemName: viewModel.isPS4Connected ? "gamecontroller.fill" : "gamecontroller")
-                    .foregroundStyle(viewModel.isPS4Connected ? Color.green : Color.secondary)
+                Circle()
+                    .fill(viewModel.isPS4Connected ? Color.green : Color.secondary.opacity(0.45))
+                    .frame(width: 9, height: 9)
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text(viewModel.isPS4Connected ? viewModel.ps4ControllerName : "Aucune manette PS4 connectée")
                         .font(.subheadline.weight(.medium))
@@ -240,7 +254,7 @@ struct MappingView: View {
                 }
 
                 HStack(alignment: .center, spacing: 14) {
-                    // Mini D-Pad visuel
+                    // Mini D-Pad visuel centré
                     VStack(spacing: 4) {
                         miniSquareButton(.dpadUp)
                         HStack(spacing: 4) {
@@ -255,8 +269,8 @@ struct MappingView: View {
 
                     Spacer(minLength: 4)
 
-                    // Mini losange A/B/X/Y
-                    VStack(spacing: 4) {
+                    // Mini losange A/B/X/Y centré
+                    VStack(spacing: 2) {
                         miniCircleButton(.buttonY)
                         HStack(spacing: 24) {
                             miniCircleButton(.buttonX)
@@ -265,7 +279,9 @@ struct MappingView: View {
                         miniCircleButton(.buttonA)
                     }
                 }
+                .padding(.horizontal, 4)
             }
+            .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
             .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
         } header: {
@@ -297,15 +313,18 @@ struct MappingView: View {
             AppHaptics.selection()
             viewModel.selectedSlotForEditing = slot
         } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 Text(slot.shortCode)
                     .font(.system(size: 10, weight: .bold))
                 Text(config.label)
                     .font(.system(size: 8, weight: .medium))
+                    .multilineTextAlignment(.center)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
             .foregroundStyle(color)
             .frame(maxWidth: .infinity)
+            .padding(.horizontal, 2)
             .padding(.vertical, 6)
             .background(color.opacity(0.14))
             .overlay(
@@ -325,13 +344,15 @@ struct MappingView: View {
             viewModel.selectedSlotForEditing = slot
         } label: {
             VStack(spacing: 1) {
-                Image(systemName: config.symbolName)
+                Text(slot.shortCode)
                     .font(.system(size: 12, weight: .bold))
                 Text(config.summaryPinBadge)
                     .font(.system(size: 8, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
             }
             .foregroundStyle(color)
-            .frame(width: 42, height: 42)
+            .frame(width: 42, height: 42, alignment: .center)
             .background(color.opacity(0.15))
             .overlay(
                 shape.strokeBorder(color.opacity(0.5), lineWidth: 1)
@@ -353,9 +374,11 @@ struct MappingView: View {
                     .font(.system(size: 11, weight: .black))
                 Text(config.summaryPinBadge)
                     .font(.system(size: 8, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
             }
             .foregroundStyle(color)
-            .frame(width: 42, height: 42)
+            .frame(width: 42, height: 42, alignment: .center)
             .background(color.opacity(0.15))
             .overlay(
                 Circle()
@@ -377,9 +400,10 @@ private struct AssignmentRowView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(assignment.colorToken.color.opacity(0.16))
                     .frame(width: 40, height: 40)
-                Image(systemName: assignment.symbolName)
+                Text(slot.shortCode)
+                    .font(.caption.weight(.black))
+                    .multilineTextAlignment(.center)
                     .foregroundStyle(assignment.colorToken.color)
-                    .font(.body.weight(.semibold))
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -405,8 +429,8 @@ private struct AssignmentRowView: View {
 
             Spacer()
 
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
+            Text("Modifier")
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(.tertiary)
         }
         .padding(.vertical, 2)

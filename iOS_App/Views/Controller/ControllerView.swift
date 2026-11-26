@@ -10,42 +10,27 @@ struct ControllerView: View {
 
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var showPS4GuideSheet = false
+    @State private var showConsoleSheet = false
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 14) {
-                    statusHeaderCard
-
-                    if verticalSizeClass == .compact {
-                        landscapeGamepadLayout
-                    } else {
-                        portraitGamepadLayout
-                    }
-
-                    LogConsoleView(
-                        logStore: viewModel.logStore,
-                        isConnected: viewModel.connectionState.isConnected,
-                        onSendRawCommand: { viewModel.sendRawCommand($0) },
-                        onClearLogs: { viewModel.clearLogs() }
-                    )
+            Group {
+                if verticalSizeClass == .compact {
+                    landscapeContainer
+                } else {
+                    portraitContainer
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Manette")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
+                    Button("Assigner") {
                         AppHaptics.selection()
                         onOpenMapping()
-                    } label: {
-                        Label("Assigner", systemImage: "slider.horizontal.3")
-                            .font(.subheadline.weight(.medium))
                     }
+                    .font(.subheadline.weight(.medium))
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
@@ -73,10 +58,70 @@ struct ControllerView: View {
                     }
                 )
             }
+            .sheet(isPresented: $showConsoleSheet) {
+                NavigationStack {
+                    ScrollView {
+                        LogConsoleView(
+                            logStore: viewModel.logStore,
+                            isConnected: viewModel.connectionState.isConnected,
+                            alwaysExpanded: true,
+                            onSendRawCommand: { viewModel.sendRawCommand($0) },
+                            onClearLogs: { viewModel.clearLogs() }
+                        )
+                        .padding(14)
+                    }
+                    .background(Color(.systemGroupedBackground).ignoresSafeArea())
+                    .scrollDismissesKeyboard(.interactively)
+                    .navigationTitle("Console BLE")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Fermer") {
+                                showConsoleSheet = false
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // MARK: - En-tête État & Télémétrie
+    // MARK: - Conteneurs Portrait / Paysage
+
+    private var portraitContainer: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                statusHeaderCard
+                portraitGamepadLayout
+                LogConsoleView(
+                    logStore: viewModel.logStore,
+                    isConnected: viewModel.connectionState.isConnected,
+                    onSendRawCommand: { viewModel.sendRawCommand($0) },
+                    onClearLogs: { viewModel.clearLogs() }
+                )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    private var landscapeContainer: some View {
+        ViewThatFits(in: .vertical) {
+            landscapeGamepadCockpit
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+
+            ScrollView(showsIndicators: false) {
+                landscapeGamepadCockpit
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    // MARK: - En-tête Portrait
 
     private var statusHeaderCard: some View {
         VStack(spacing: 10) {
@@ -122,15 +167,15 @@ struct ControllerView: View {
             Divider()
                 .opacity(0.45)
 
-            // Ligne d'état manette PS4 / DualShock 4 Bluetooth
             HStack(spacing: 8) {
                 Button {
                     AppHaptics.selection()
                     showPS4GuideSheet = true
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: viewModel.isPS4Connected ? "gamecontroller.fill" : "gamecontroller")
-                            .foregroundStyle(viewModel.isPS4Connected ? Color.green : Color.secondary)
+                    HStack(spacing: 7) {
+                        Circle()
+                            .fill(viewModel.isPS4Connected ? Color.green : Color.secondary.opacity(0.5))
+                            .frame(width: 7, height: 7)
                         Text(viewModel.isPS4Connected ? "Manette : \(viewModel.ps4ControllerName)" : "Manette PS4 / Bluetooth")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(viewModel.isPS4Connected ? .primary : .secondary)
@@ -166,6 +211,7 @@ struct ControllerView: View {
                     Text("Connectez un Arduino pour piloter les broches.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
                     Spacer()
                     if case .disconnected = viewModel.connectionState,
                        viewModel.lastConnectedDeviceName != nil {
@@ -198,7 +244,6 @@ struct ControllerView: View {
 
     private var portraitGamepadLayout: some View {
         VStack(spacing: 14) {
-            // Gâchettes L1 / R1 + Select / STOP / Start
             HStack(spacing: 8) {
                 ShoulderPillButton(
                     slotCode: "L1",
@@ -237,99 +282,245 @@ struct ControllerView: View {
                 .equatable()
             }
 
-            // Curseurs analogiques L2 & R2
             VStack(spacing: 10) {
-                sliderCard(for: .sliderLeft)
-                sliderCard(for: .sliderRight)
+                sliderCard(for: .sliderLeft, isCompact: false)
+                sliderCard(for: .sliderRight, isCompact: false)
             }
 
-            // Croix directionnelle + Boutons A/B/X/Y
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 14) {
-                    dpadCluster
+                HStack(alignment: .center, spacing: 12) {
+                    portraitDPadCluster
                     Spacer(minLength: 4)
-                    actionButtonsCluster
+                    portraitActionCluster
                 }
 
                 VStack(spacing: 14) {
-                    dpadCluster
-                    actionButtonsCluster
+                    portraitDPadCluster
+                    portraitActionCluster
                 }
             }
         }
     }
 
-    // MARK: - Disposition Paysage (Manette Console)
+    // MARK: - Cockpit Ergonomique Paysage (Manette Sans Défilement)
 
-    private var landscapeGamepadLayout: some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    ShoulderPillButton(
-                        slotCode: "L1",
-                        assignment: viewModel.assignment(for: .shoulderL1),
-                        isActive: viewModel.isSlotActive(.shoulderL1),
-                        onDown: { viewModel.handleButtonDown(slot: .shoulderL1) },
-                        onUp: { viewModel.handleButtonUp(slot: .shoulderL1) }
+    private var landscapeGamepadCockpit: some View {
+        VStack(spacing: 6) {
+            compactLandscapeStatusBar
+
+            HStack(alignment: .center, spacing: 10) {
+                // Zone Pouce Gauche : L1 + Curseur L2 + Croix directionnelle
+                VStack(spacing: 5) {
+                    HStack(spacing: 8) {
+                        ShoulderPillButton(
+                            slotCode: "L1",
+                            assignment: viewModel.assignment(for: .shoulderL1),
+                            isActive: viewModel.isSlotActive(.shoulderL1),
+                            isCompact: true,
+                            onDown: { viewModel.handleButtonDown(slot: .shoulderL1) },
+                            onUp: { viewModel.handleButtonUp(slot: .shoulderL1) }
+                        )
+                        .equatable()
+                        .frame(width: 60)
+
+                        sliderCard(for: .sliderLeft, isCompact: true)
+                    }
+
+                    DPadClusterView(
+                        upAssignment: viewModel.assignment(for: .dpadUp),
+                        downAssignment: viewModel.assignment(for: .dpadDown),
+                        leftAssignment: viewModel.assignment(for: .dpadLeft),
+                        rightAssignment: viewModel.assignment(for: .dpadRight),
+                        isUpActive: viewModel.isSlotActive(.dpadUp),
+                        isDownActive: viewModel.isSlotActive(.dpadDown),
+                        isLeftActive: viewModel.isSlotActive(.dpadLeft),
+                        isRightActive: viewModel.isSlotActive(.dpadRight),
+                        buttonSize: 44,
+                        gridSpacing: 4,
+                        containerPadding: 7,
+                        cornerRadius: 12,
+                        isCompact: true,
+                        onDown: { viewModel.handleButtonDown(slot: $0) },
+                        onUp: { viewModel.handleButtonUp(slot: $0) }
                     )
                     .equatable()
                 }
-                sliderCard(for: .sliderLeft)
-                dpadCluster
-            }
+                .frame(maxWidth: .infinity)
 
-            VStack(spacing: 10) {
-                ShoulderPillButton(
-                    slotCode: "SEL",
-                    assignment: viewModel.assignment(for: .select),
-                    isActive: viewModel.isSlotActive(.select),
-                    onDown: { viewModel.handleButtonDown(slot: .select) },
-                    onUp: { viewModel.handleButtonUp(slot: .select) }
-                )
-                .equatable()
+                // Console Centrale Symétrique : Select, Start, STOP, Logs
+                VStack(spacing: 7) {
+                    ShoulderPillButton(
+                        slotCode: "SEL",
+                        assignment: viewModel.assignment(for: .select),
+                        isActive: viewModel.isSlotActive(.select),
+                        isCompact: true,
+                        onDown: { viewModel.handleButtonDown(slot: .select) },
+                        onUp: { viewModel.handleButtonUp(slot: .select) }
+                    )
+                    .equatable()
 
-                ShoulderPillButton(
-                    slotCode: "STA",
-                    assignment: viewModel.assignment(for: .start),
-                    isActive: viewModel.isSlotActive(.start),
-                    onDown: { viewModel.handleButtonDown(slot: .start) },
-                    onUp: { viewModel.handleButtonUp(slot: .start) }
-                )
-                .equatable()
+                    ShoulderPillButton(
+                        slotCode: "STA",
+                        assignment: viewModel.assignment(for: .start),
+                        isActive: viewModel.isSlotActive(.start),
+                        isCompact: true,
+                        onDown: { viewModel.handleButtonDown(slot: .start) },
+                        onUp: { viewModel.handleButtonUp(slot: .start) }
+                    )
+                    .equatable()
 
-                Button {
-                    viewModel.triggerEmergencyStop()
-                } label: {
-                    Label("STOP", systemImage: "exclamationmark.octagon.fill")
-                        .font(.caption.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                    Button {
+                        viewModel.triggerEmergencyStop()
+                    } label: {
+                        Text("STOP")
+                            .font(.caption.weight(.black))
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .background(
+                                Capsule()
+                                    .fill(Color.red)
+                                    .shadow(color: Color.red.opacity(0.35), radius: 5, y: 2)
+                            )
+                    }
+                    .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.93))
+
+                    ConsoleSheetButton(logStore: viewModel.logStore) {
+                        AppHaptics.soft()
+                        showConsoleSheet = true
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-            }
-            .frame(maxWidth: 120)
+                .frame(width: 96)
 
-            VStack(spacing: 10) {
-                ShoulderPillButton(
-                    slotCode: "R1",
-                    assignment: viewModel.assignment(for: .shoulderR1),
-                    isActive: viewModel.isSlotActive(.shoulderR1),
-                    onDown: { viewModel.handleButtonDown(slot: .shoulderR1) },
-                    onUp: { viewModel.handleButtonUp(slot: .shoulderR1) }
-                )
-                .equatable()
-                sliderCard(for: .sliderRight)
-                actionButtonsCluster
+                // Zone Pouce Droit : Curseur R2 + R1 + Losange A/B/X/Y
+                VStack(spacing: 5) {
+                    HStack(spacing: 8) {
+                        sliderCard(for: .sliderRight, isCompact: true)
+
+                        ShoulderPillButton(
+                            slotCode: "R1",
+                            assignment: viewModel.assignment(for: .shoulderR1),
+                            isActive: viewModel.isSlotActive(.shoulderR1),
+                            isCompact: true,
+                            onDown: { viewModel.handleButtonDown(slot: .shoulderR1) },
+                            onUp: { viewModel.handleButtonUp(slot: .shoulderR1) }
+                        )
+                        .equatable()
+                        .frame(width: 60)
+                    }
+
+                    ActionButtonsClusterView(
+                        buttonY: viewModel.assignment(for: .buttonY),
+                        buttonX: viewModel.assignment(for: .buttonX),
+                        buttonB: viewModel.assignment(for: .buttonB),
+                        buttonA: viewModel.assignment(for: .buttonA),
+                        isYActive: viewModel.isSlotActive(.buttonY),
+                        isXActive: viewModel.isSlotActive(.buttonX),
+                        isBActive: viewModel.isSlotActive(.buttonB),
+                        isAActive: viewModel.isSlotActive(.buttonA),
+                        buttonSize: 50,
+                        middleGap: 44,
+                        verticalGap: -6,
+                        containerPadding: 8,
+                        isCompact: true,
+                        onDown: { viewModel.handleButtonDown(slot: $0) },
+                        onUp: { viewModel.handleButtonUp(slot: $0) }
+                    )
+                    .equatable()
+                }
+                .frame(maxWidth: .infinity)
             }
         }
     }
 
-    private func sliderCard(for slot: GamepadSlot) -> some View {
+    private var compactLandscapeStatusBar: some View {
+        HStack(spacing: 8) {
+            LivePulseBeacon(
+                color: statusColor,
+                isPulsing: viewModel.connectionState.isBusy,
+                dotSize: 8
+            )
+
+            Text(viewModel.connectionState.statusText)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+
+            Text(viewModel.boardCapability.boardType.shortBadge)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color(.tertiarySystemFill))
+                .clipShape(Capsule())
+
+            Spacer(minLength: 4)
+
+            TelemetryBadgesView(
+                telemetryStore: telemetryStore,
+                onRequestTelemetry: {
+                    AppHaptics.light()
+                    viewModel.requestTelemetry()
+                }
+            )
+
+            Button {
+                AppHaptics.selection()
+                showPS4GuideSheet = true
+            } label: {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(viewModel.isPS4Connected ? Color.green : Color.secondary.opacity(0.45))
+                        .frame(width: 6, height: 6)
+                    if let battery = viewModel.ps4BatteryPercentage {
+                        Text("PS4 \(battery)%")
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                    } else {
+                        Text("PS4")
+                    }
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(viewModel.isPS4Connected ? .primary : .secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(.tertiarySystemFill))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.92))
+
+            if !viewModel.connectionState.isConnected {
+                if case .disconnected = viewModel.connectionState,
+                   viewModel.lastConnectedDeviceName != nil {
+                    Button("Reconnecter") {
+                        AppHaptics.medium()
+                        viewModel.reconnectLastDevice()
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+
+                Button("Scanner") {
+                    AppHaptics.selection()
+                    onOpenScan()
+                }
+                .font(.caption2.weight(.semibold))
+                .buttonStyle(.borderedProminent)
+                .controlSize(.mini)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .appleGroupedCard(cornerRadius: 14)
+        .animation(AppleMotion.fluidSpring, value: viewModel.connectionState)
+    }
+
+    private func sliderCard(for slot: GamepadSlot, isCompact: Bool) -> some View {
         AnalogSliderCard(
             slot: slot,
             config: viewModel.assignment(for: slot),
             initialValue: viewModel.initialSliderValue(for: slot),
+            isCompact: isCompact,
             externalUpdates: viewModel.externalSliderUpdates,
             onChanged: { value, isFinal in
                 viewModel.handleSliderChanged(slot: slot, value: value, isFinal: isFinal)
@@ -337,7 +528,7 @@ struct ControllerView: View {
         )
     }
 
-    private var dpadCluster: some View {
+    private var portraitDPadCluster: some View {
         DPadClusterView(
             upAssignment: viewModel.assignment(for: .dpadUp),
             downAssignment: viewModel.assignment(for: .dpadDown),
@@ -353,7 +544,7 @@ struct ControllerView: View {
         .equatable()
     }
 
-    private var actionButtonsCluster: some View {
+    private var portraitActionCluster: some View {
         ActionButtonsClusterView(
             buttonY: viewModel.assignment(for: .buttonY),
             buttonX: viewModel.assignment(for: .buttonX),
@@ -378,6 +569,28 @@ struct ControllerView: View {
     }
 }
 
+/// Bouton compact isolé affichant le compteur de logs en mode paysage sans redessiner la manette.
+private struct ConsoleSheetButton: View {
+    @ObservedObject var logStore: BLELogStore
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            Text("Logs (\(logStore.totalCount))")
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .contentTransition(.numericText())
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(Color(.tertiarySystemFill))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.92))
+        .animation(AppleMotion.fluidSpring, value: logStore.totalCount)
+    }
+}
+
 /// Badges isolés : seuls ces deux éléments se redessinent lors des paquets RSSI et température.
 private struct TelemetryBadgesView: View {
     @ObservedObject var telemetryStore: BLETelemetryStore
@@ -388,19 +601,18 @@ private struct TelemetryBadgesView: View {
             if let temp = telemetryStore.latestTemperature {
                 Button(action: onRequestTelemetry) {
                     HStack(spacing: 4) {
-                        Image(systemName: "thermometer")
                         Text(String(format: "%.1f °C", temp))
                             .monospacedDigit()
                             .contentTransition(.numericText())
                         if telemetryStore.isTemperatureSimulated {
-                            Text("(démo)")
+                            Text("démo")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     }
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
+                    .padding(.vertical, 4)
                     .background(Color.orange.opacity(0.14))
                     .foregroundStyle(.orange)
                     .clipShape(Capsule())
@@ -420,7 +632,7 @@ private struct TelemetryBadgesView: View {
                 }
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
-                .padding(.vertical, 5)
+                .padding(.vertical, 4)
                 .background(Color(.tertiarySystemFill))
                 .clipShape(Capsule())
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
@@ -441,6 +653,7 @@ private struct ShoulderPillButton: View, Equatable {
     let slotCode: String
     let assignment: ButtonAssignment
     let isActive: Bool
+    var isCompact: Bool = false
     let onDown: () -> Void
     let onUp: () -> Void
 
@@ -448,6 +661,7 @@ private struct ShoulderPillButton: View, Equatable {
         lhs.slotCode == rhs.slotCode
             && lhs.assignment == rhs.assignment
             && lhs.isActive == rhs.isActive
+            && lhs.isCompact == rhs.isCompact
     }
 
     var body: some View {
@@ -461,18 +675,20 @@ private struct ShoulderPillButton: View, Equatable {
             onDown: onDown,
             onUp: onUp
         ) { highlighted, _ in
-            HStack(spacing: 4) {
-                Image(systemName: assignment.symbolName)
-                    .font(.caption.weight(.bold))
+            VStack(spacing: 1) {
+                Text(slotCode)
+                    .font(.system(size: isCompact ? 8.5 : 9, weight: .bold))
+                    .opacity(highlighted ? 0.85 : 0.72)
                 Text(assignment.label)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: isCompact ? 11 : 12, weight: .semibold))
+                    .multilineTextAlignment(.center)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.68)
             }
             .foregroundStyle(highlighted ? .white : color)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 6)
+            .padding(.vertical, isCompact ? 6 : 8)
+            .padding(.horizontal, 8)
             .background(
                 HardwareKeycapBackground(
                     shape: capsule,
@@ -489,6 +705,7 @@ private struct AnalogSliderCard: View {
     let slot: GamepadSlot
     let config: ButtonAssignment
     let externalUpdates: PassthroughSubject<(slot: GamepadSlot, value: Double), Never>
+    let isCompact: Bool
     let onChanged: (Double, Bool) -> Void
 
     @State private var localValue: Double
@@ -498,11 +715,13 @@ private struct AnalogSliderCard: View {
         slot: GamepadSlot,
         config: ButtonAssignment,
         initialValue: Double,
+        isCompact: Bool = false,
         externalUpdates: PassthroughSubject<(slot: GamepadSlot, value: Double), Never>,
         onChanged: @escaping (Double, Bool) -> Void
     ) {
         self.slot = slot
         self.config = config
+        self.isCompact = isCompact
         self.externalUpdates = externalUpdates
         self.onChanged = onChanged
         _localValue = State(initialValue: initialValue)
@@ -516,27 +735,25 @@ private struct AnalogSliderCard: View {
         let restInt = min(max(config.releaseValue, Int(minVal)), Int(maxVal))
         let unitSuffix = (config.actionType == .pinServo) ? "°" : ""
         let accent = config.colorToken.color
+        let radius: CGFloat = isCompact ? 13 : 16
 
-        VStack(spacing: 6) {
+        VStack(spacing: isCompact ? 2 : 6) {
             HStack(spacing: 6) {
-                Image(systemName: config.symbolName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(accent)
-                    .frame(width: 22, height: 22)
-                    .background(accent.opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-
                 Text(config.label)
-                    .font(.caption.weight(.semibold))
+                    .font(isCompact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
 
-                Text("\(slot.shortCode) • P\(config.primaryPin)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                if !isCompact {
+                    Text("\(slot.shortCode) • P\(config.primaryPin)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
 
-                Spacer()
+                Spacer(minLength: 4)
 
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     if roundedInt != restInt {
                         Button {
                             AppHaptics.light()
@@ -545,23 +762,24 @@ private struct AnalogSliderCard: View {
                             }
                             onChanged(Double(restInt), true)
                         } label: {
-                            Image(systemName: "arrow.counterclockwise")
-                                .font(.system(size: 10, weight: .bold))
+                            Text("RàZ")
+                                .font(.system(size: isCompact ? 9 : 10, weight: .semibold))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 22, height: 22)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
                                 .background(Color(.tertiarySystemFill))
-                                .clipShape(Circle())
+                                .clipShape(Capsule())
                         }
-                        .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.86))
+                        .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.88))
                         .accessibilityLabel("Réinitialiser \(config.label)")
                         .transition(.scale(scale: 0.75).combined(with: .opacity))
                     }
 
                     Text("\(roundedInt)\(unitSuffix)")
-                        .font(.caption.monospacedDigit().weight(.bold))
+                        .font((isCompact ? Font.caption2 : Font.caption).monospacedDigit().weight(.bold))
                         .contentTransition(.numericText())
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, isCompact ? 7 : 9)
+                        .padding(.vertical, isCompact ? 2 : 3)
                         .background(isDragging ? accent : accent.opacity(0.15))
                         .foregroundStyle(isDragging ? .white : accent)
                         .clipShape(Capsule())
@@ -593,11 +811,11 @@ private struct AnalogSliderCard: View {
             }
             .tint(accent)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .appleGroupedCard(cornerRadius: 16)
+        .padding(.horizontal, isCompact ? 10 : 12)
+        .padding(.vertical, isCompact ? 5 : 10)
+        .appleGroupedCard(cornerRadius: radius)
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(isDragging ? accent.opacity(0.55) : .clear, lineWidth: 1.5)
                 .animation(AppleMotion.pressSpring, value: isDragging)
         )
@@ -619,6 +837,14 @@ private struct PS4ConnectionGuideSheet: View {
     let onOpenMapping: () -> Void
     @Environment(\.dismiss) private var dismiss
 
+    private static let defaultMappings: [(ps4: String, slot: String)] = [
+        ("Croix / Rond", "Bouton A / Bouton B"),
+        ("Carré / Triangle", "Bouton X / Bouton Y"),
+        ("L1 / R1", "Gâchettes L1 / R1"),
+        ("L2 / R2", "Curseurs L2 / R2"),
+        ("Share / Options", "Select / Start")
+    ]
+
     var body: some View {
         NavigationStack {
             List {
@@ -628,8 +854,8 @@ private struct PS4ConnectionGuideSheet: View {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill((viewModel.isPS4Connected ? Color.green : Color.secondary).opacity(0.14))
                                 .frame(width: 42, height: 42)
-                            Image(systemName: viewModel.isPS4Connected ? "gamecontroller.fill" : "gamecontroller")
-                                .font(.title3)
+                            Text("PS4")
+                                .font(.caption.weight(.black))
                                 .foregroundStyle(viewModel.isPS4Connected ? Color.green : Color.secondary)
                         }
 
@@ -672,15 +898,16 @@ private struct PS4ConnectionGuideSheet: View {
                 }
 
                 Section("Comment appairer une manette PS4 (DualShock 4)") {
-                    Label("1. Maintenez simultanément les boutons SHARE + PS pendant 3 secondes jusqu'au clignotement rapide de la barre LED.", systemImage: "1.circle.fill")
-                    Label("2. Sur l'iPhone, ouvrez Réglages > Bluetooth et sélectionnez DUALSHOCK 4 Wireless Controller.", systemImage: "2.circle.fill")
-                    Label("3. Revenez dans l'application : chaque touche PS4 pilote instantanément l'action assignée à votre Arduino.", systemImage: "3.circle.fill")
+                    stepRow(number: "1", text: "Maintenez simultanément SHARE + PS pendant 3 secondes jusqu'au clignotement rapide de la barre LED.")
+                    stepRow(number: "2", text: "Sur l'iPhone, ouvrez Réglages > Bluetooth et sélectionnez DUALSHOCK 4 Wireless Controller.")
+                    stepRow(number: "3", text: "Revenez dans l'application : chaque touche PS4 pilote instantanément l'action assignée.")
                 }
 
                 Section("Correspondance PS4 par défaut") {
-                    Text("Croix = Bouton A  |  Rond = Bouton B\nCarré = Bouton X  |  Triangle = Bouton Y\nL1 / R1 = Gâchettes  |  L2 / R2 = Curseurs\nShare = Select  |  Options = Start")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    ForEach(Self.defaultMappings, id: \.ps4) { item in
+                        LabeledContent(item.ps4, value: item.slot)
+                            .font(.subheadline)
+                    }
 
                     Button("Configurer les boutons et sticks dans Assigner") {
                         AppHaptics.selection()
@@ -701,5 +928,20 @@ private struct PS4ConnectionGuideSheet: View {
                 }
             }
         }
+    }
+
+    private func stepRow(number: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 22, height: 22)
+                .background(Color.accentColor.opacity(0.14))
+                .clipShape(Circle())
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(.primary)
+        }
+        .padding(.vertical, 2)
     }
 }
