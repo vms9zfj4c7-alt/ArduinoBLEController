@@ -106,11 +106,15 @@ private struct DiamondFaceButton: View {
             VStack(spacing: isCompact ? 0.5 : 2) {
                 Text(slotLetter)
                     .font(.system(size: isCompact ? 14 : 17, weight: .black, design: .rounded))
+                    .tracking(-0.2)
+                    .frame(maxWidth: .infinity)
                 Text(assignment.label)
                     .font(.system(size: isCompact ? 8.5 : 10, weight: .semibold))
+                    .tracking(0.1)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .minimumScaleFactor(0.62)
+                    .frame(maxWidth: .infinity)
             }
             .foregroundStyle(highlighted ? .white : baseColor)
             .padding(.horizontal, isCompact ? 5 : 7)

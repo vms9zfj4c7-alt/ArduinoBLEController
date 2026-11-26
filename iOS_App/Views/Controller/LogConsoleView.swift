@@ -10,6 +10,7 @@ struct LogConsoleView: View {
 
     @State private var isExpanded: Bool = false
     @State private var rawCommandText: String = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var showBody: Bool {
         alwaysExpanded || isExpanded
@@ -142,7 +143,7 @@ struct LogConsoleView: View {
                     }
                     .padding(10)
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
         }
         .appleGroupedCard(cornerRadius: 18)
@@ -190,7 +191,7 @@ struct LogConsoleView: View {
     private func toggleExpanded() {
         AppHaptics.soft()
         let next = !isExpanded
-        withAnimation(AppleMotion.fluidSpring) {
+        withAnimation(AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion)) {
             isExpanded = next
         }
         logStore.setExpanded(next)

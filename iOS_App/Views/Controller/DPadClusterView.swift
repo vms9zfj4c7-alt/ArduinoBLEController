@@ -133,12 +133,15 @@ struct GamepadTactileButton: View {
                 if !directionGlyph.isEmpty {
                     Text(directionGlyph)
                         .font(.system(size: isCompact ? 13 : 16, weight: .bold))
+                        .frame(maxWidth: .infinity)
                 }
                 Text(assignment.label)
                     .font(.system(size: isCompact ? 9.5 : 10.5, weight: .semibold))
+                    .tracking(0.1)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .minimumScaleFactor(0.65)
+                    .frame(maxWidth: .infinity)
             }
             .foregroundStyle(highlighted ? .white : baseColor)
             .padding(.horizontal, 4)

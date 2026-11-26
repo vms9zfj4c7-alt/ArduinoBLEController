@@ -137,8 +137,10 @@ struct ScanView: View {
                             .appleGroupedCard(cornerRadius: 18)
                         }
                     }
+                    .frame(maxWidth: 660)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
                 }
                 .background(Color(.systemGroupedBackground).ignoresSafeArea())
                 .scrollDismissesKeyboard(.interactively)

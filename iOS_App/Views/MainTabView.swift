@@ -13,6 +13,7 @@ struct MainTabView: View {
     @ObservedObject var mappingViewModel: MappingViewModel
 
     @State private var selectedTab: Tab = .scan
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -26,12 +27,12 @@ struct MainTabView: View {
                 viewModel: controllerViewModel,
                 telemetryStore: controllerViewModel.telemetryStore,
                 onOpenScan: {
-                    withAnimation(AppleMotion.fluidSpring) {
+                    withAnimation(AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion)) {
                         selectedTab = .scan
                     }
                 },
                 onOpenMapping: {
-                    withAnimation(AppleMotion.fluidSpring) {
+                    withAnimation(AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion)) {
                         selectedTab = .mapping
                     }
                 }
@@ -51,7 +52,7 @@ struct MainTabView: View {
             if isConnected {
                 AppHaptics.success()
                 if selectedTab == .scan {
-                    withAnimation(AppleMotion.fluidSpring) {
+                    withAnimation(AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion)) {
                         selectedTab = .controller
                     }
                 }

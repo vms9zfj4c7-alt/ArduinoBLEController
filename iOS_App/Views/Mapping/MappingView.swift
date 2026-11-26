@@ -140,6 +140,7 @@ struct MappingView: View {
                         .frame(maxWidth: 132)
                     }
                 }
+                .frame(maxWidth: 360)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .animation(AppleMotion.fluidSpring, value: viewModel.assignments)
@@ -368,9 +369,12 @@ struct MappingView: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity)
                 Text(config.summaryPinBadge)
                     .font(.system(size: 9, weight: .semibold))
+                    .tracking(0.3)
                     .opacity(0.8)
+                    .frame(maxWidth: .infinity)
             }
             .foregroundStyle(color)
             .frame(maxWidth: .infinity, minHeight: 50)
@@ -395,11 +399,13 @@ struct MappingView: View {
             VStack(spacing: 1) {
                 Text(slot.shortCode)
                     .font(.system(size: 10, weight: .bold))
+                    .frame(maxWidth: .infinity)
                 Text(config.label)
                     .font(.system(size: 8, weight: .medium))
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity)
             }
             .foregroundStyle(color)
             .frame(maxWidth: .infinity)
@@ -425,10 +431,12 @@ struct MappingView: View {
             VStack(spacing: 1) {
                 Text(slot.shortCode)
                     .font(.system(size: 12, weight: .bold))
+                    .frame(maxWidth: .infinity)
                 Text(config.summaryPinBadge)
                     .font(.system(size: 8, weight: .semibold))
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity)
             }
             .foregroundStyle(color)
             .frame(width: 42, height: 42, alignment: .center)
@@ -451,10 +459,12 @@ struct MappingView: View {
             VStack(spacing: 1) {
                 Text(slot.shortCode)
                     .font(.system(size: 11, weight: .black))
+                    .frame(maxWidth: .infinity)
                 Text(config.summaryPinBadge)
                     .font(.system(size: 8, weight: .semibold))
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity)
             }
             .foregroundStyle(color)
             .frame(width: 42, height: 42, alignment: .center)
@@ -506,7 +516,11 @@ private struct AssignmentRowView: View {
 
             Text("Modifier")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color(.tertiarySystemFill))
+                .clipShape(Capsule())
         }
         .padding(.vertical, 2)
     }

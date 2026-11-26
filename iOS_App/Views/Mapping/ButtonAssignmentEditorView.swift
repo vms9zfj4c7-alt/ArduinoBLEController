@@ -171,11 +171,14 @@ struct ButtonAssignmentEditorView: View {
                     VStack(spacing: 2) {
                         Text(draft.id.shortCode)
                             .font(.system(size: 16, weight: .black, design: .rounded))
+                            .tracking(-0.2)
+                            .frame(maxWidth: .infinity)
                         Text(title)
                             .font(.system(size: 10, weight: .semibold))
                             .multilineTextAlignment(.center)
                             .lineLimit(2)
                             .minimumScaleFactor(0.68)
+                            .frame(maxWidth: .infinity)
                     }
                     .foregroundStyle(previewPressed ? .white : color)
                     .padding(.horizontal, 5)
@@ -297,16 +300,24 @@ struct ButtonAssignmentEditorView: View {
                                 Text(role.title)
                                     .font(.caption.weight(.bold))
                                     .multilineTextAlignment(.center)
+                                    .frame(maxWidth: .infinity)
                                 Text(role.subtitle)
                                     .font(.system(size: 10, weight: .medium))
                                     .multilineTextAlignment(.center)
                                     .opacity(selected ? 0.88 : 0.72)
+                                    .frame(maxWidth: .infinity)
                             }
                             .foregroundStyle(selected ? .white : .primary)
-                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .center)
                             .padding(.horizontal, 6)
                             .background(
                                 shape.fill(selected ? draft.colorToken.color : Color(.tertiarySystemFill))
+                                    .overlay(
+                                        shape.strokeBorder(
+                                            selected ? Color.white.opacity(0.24) : Color.primary.opacity(0.06),
+                                            lineWidth: 1
+                                        )
+                                    )
                             )
                         }
                         .buttonStyle(.borderless)
@@ -337,20 +348,32 @@ struct ButtonAssignmentEditorView: View {
                             VStack(spacing: 1) {
                                 Text("Pin \(option.number)")
                                     .font(.caption.weight(.bold))
+                                    .multilineTextAlignment(.center)
+                                    .frame(maxWidth: .infinity)
                                 if option.isBuiltInLED {
                                     Text("LED")
                                         .font(.system(size: 8, weight: .bold))
-                                        .opacity(0.8)
+                                        .tracking(0.4)
+                                        .opacity(0.82)
+                                        .frame(maxWidth: .infinity)
                                 } else if option.supportsPWM {
                                     Text("PWM")
                                         .font(.system(size: 8, weight: .medium))
+                                        .tracking(0.3)
                                         .opacity(0.72)
+                                        .frame(maxWidth: .infinity)
                                 }
                             }
                             .foregroundStyle(isSelected ? .white : .primary)
-                            .frame(maxWidth: .infinity, minHeight: 38)
+                            .frame(maxWidth: .infinity, minHeight: 42, alignment: .center)
                             .background(
                                 shape.fill(isSelected ? draft.colorToken.color : Color(.tertiarySystemFill))
+                                    .overlay(
+                                        shape.strokeBorder(
+                                            isSelected ? Color.white.opacity(0.24) : Color.primary.opacity(0.06),
+                                            lineWidth: 1
+                                        )
+                                    )
                             )
                         }
                         .buttonStyle(.borderless)

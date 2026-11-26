@@ -10,6 +10,8 @@ struct BLERadarView: View {
     let onConnectDevice: (BLEDevice) -> Void
     let onToggleScan: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private static let radarRingsMeters: [Double] = [1.0, 3.0, 8.0, 15.0]
     private static let ringLabels: [String] = ["1 m", "3 m", "8 m", "15 m"]
 
@@ -83,9 +85,9 @@ struct BLERadarView: View {
                         )
                         .frame(width: diameter, height: diameter)
 
-                    // Faisceau rotatif fluide (60/120 Hz quand actif)
-                    if isScanning {
-                        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isScanning)) { context in
+                    // Faisceau rotatif fluide (60/120 Hz quand actif, désactivé si Réduire les animations)
+                    if isScanning && !reduceMotion {
+                        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isScanning || reduceMotion)) { context in
                             let angle = Self.sweepAngleDegrees(for: context.date)
                             Circle()
                                 .fill(
@@ -110,9 +112,11 @@ struct BLERadarView: View {
                     Rectangle()
                         .fill(Color.cyan.opacity(0.12))
                         .frame(width: 1, height: diameter)
+                        .allowsHitTesting(false)
                     Rectangle()
                         .fill(Color.cyan.opacity(0.12))
                         .frame(width: diameter, height: 1)
+                        .allowsHitTesting(false)
 
                     // Anneaux concentriques calibrés en mètres
                     ForEach(Array(Self.radarRingsMeters.enumerated()), id: \.offset) { idx, meters in
@@ -123,21 +127,26 @@ struct BLERadarView: View {
                                 lineWidth: 1
                             )
                             .frame(width: ringR * 2, height: ringR * 2)
+                            .allowsHitTesting(false)
 
                         Text(Self.ringLabels[idx])
                             .font(.system(size: 9, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color.cyan.opacity(0.75))
+                            .tracking(0.3)
+                            .foregroundStyle(Color.cyan.opacity(0.78))
+                            .multilineTextAlignment(.center)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
                             .background(Color(red: 0.02, green: 0.10, blue: 0.16).opacity(0.85))
                             .clipShape(Capsule())
                             .position(x: center.x, y: center.y - ringR)
+                            .allowsHitTesting(false)
                     }
 
                     // Bordure extérieure
                     Circle()
                         .strokeBorder(Color.cyan.opacity(0.32), lineWidth: 1.4)
                         .frame(width: diameter, height: diameter)
+                        .allowsHitTesting(false)
 
                     // Point central (iPhone)
                     ZStack {
@@ -149,6 +158,7 @@ struct BLERadarView: View {
                             .frame(width: 8, height: 8)
                     }
                     .position(center)
+                    .allowsHitTesting(false)
 
                     // Points cliquables représentant chaque appareil BLE détecté
                     ForEach(blips) { blip in
@@ -174,7 +184,10 @@ struct BLERadarView: View {
                     }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
-                .animation(AppleMotion.fluidSpring, value: blips.map(\.positionSignature))
+                .animation(
+                    AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion),
+                    value: blips.map(\.positionSignature)
+                )
             }
             .frame(height: 248)
 

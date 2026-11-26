@@ -9,6 +9,7 @@ struct ControllerView: View {
     let onOpenMapping: () -> Void
 
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showPS4GuideSheet = false
     @State private var showConsoleSheet = false
 
@@ -22,7 +23,10 @@ struct ControllerView: View {
                 }
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .animation(AppleMotion.fluidSpring, value: viewModel.isSimplifiedMode)
+            .animation(
+                AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion),
+                value: viewModel.isSimplifiedMode
+            )
             .navigationTitle("Manette")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -273,21 +277,11 @@ struct ControllerView: View {
                 VStack(spacing: 12) {
                     sliderCard(for: .sliderLeft, isCompact: false)
 
-                    Button {
-                        viewModel.triggerEmergencyStop()
-                    } label: {
-                        Text("STOP")
-                            .font(.subheadline.weight(.black))
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, minHeight: 46)
-                            .background(
-                                Capsule()
-                                    .fill(Color.red)
-                                    .shadow(color: Color.red.opacity(0.35), radius: 6, y: 2)
-                            )
-                    }
-                    .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.94))
+                    EmergencyStopHoldButton(
+                        font: .subheadline.weight(.black),
+                        minHeight: 46,
+                        onTrigger: { viewModel.triggerEmergencyStop() }
+                    )
                 }
                 .frame(maxWidth: .infinity)
 
@@ -325,6 +319,8 @@ struct ControllerView: View {
                     Text(viewModel.connectionState.statusText)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .layoutPriority(1)
 
                     HStack(spacing: 6) {
                         Text(viewModel.boardCapability.boardType.shortBadge)
@@ -333,6 +329,7 @@ struct ControllerView: View {
                         if viewModel.boardCapability.isAutoDetected {
                             Text("Auto")
                                 .font(.caption2.weight(.bold))
+                                .tracking(0.3)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
                                 .background(Color.blue.opacity(0.14))
@@ -342,6 +339,7 @@ struct ControllerView: View {
                         if viewModel.isPS4Connected {
                             Text("PS4")
                                 .font(.caption2.weight(.bold))
+                                .tracking(0.3)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
                                 .background(Color.green.opacity(0.16))
@@ -560,21 +558,11 @@ struct ControllerView: View {
                     )
                     .equatable()
 
-                    Button {
-                        viewModel.triggerEmergencyStop()
-                    } label: {
-                        Text("STOP")
-                            .font(.caption.weight(.black))
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, minHeight: 36)
-                            .background(
-                                Capsule()
-                                    .fill(Color.red)
-                                    .shadow(color: Color.red.opacity(0.35), radius: 5, y: 2)
-                            )
-                    }
-                    .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.93))
+                    EmergencyStopHoldButton(
+                        font: .caption.weight(.black),
+                        minHeight: 36,
+                        onTrigger: { viewModel.triggerEmergencyStop() }
+                    )
 
                     ConsoleSheetButton(logStore: viewModel.logStore) {
                         AppHaptics.soft()
@@ -730,6 +718,10 @@ struct ControllerView: View {
             isDownActive: viewModel.isSlotActive(.dpadDown),
             isLeftActive: viewModel.isSlotActive(.dpadLeft),
             isRightActive: viewModel.isSlotActive(.dpadRight),
+            buttonSize: 54,
+            gridSpacing: 6,
+            containerPadding: 9,
+            cornerRadius: 14,
             onDown: { viewModel.handleButtonDown(slot: $0) },
             onUp: { viewModel.handleButtonUp(slot: $0) }
         )
@@ -746,6 +738,10 @@ struct ControllerView: View {
             isXActive: viewModel.isSlotActive(.buttonX),
             isBActive: viewModel.isSlotActive(.buttonB),
             isAActive: viewModel.isSlotActive(.buttonA),
+            buttonSize: 54,
+            middleGap: 34,
+            verticalGap: 0,
+            containerPadding: 9,
             onDown: { viewModel.handleButtonDown(slot: $0) },
             onUp: { viewModel.handleButtonUp(slot: $0) }
         )
@@ -802,19 +798,11 @@ private struct EssentialActionPod: View, Equatable {
             }
 
             if includeStopButton {
-                Button(action: onStop) {
-                    Text("STOP")
-                        .font(.subheadline.weight(.black))
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, minHeight: 46)
-                        .background(
-                            Capsule()
-                                .fill(Color.red)
-                                .shadow(color: Color.red.opacity(0.32), radius: 5, y: 2)
-                        )
-                }
-                .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.94))
+                EmergencyStopHoldButton(
+                    font: .subheadline.weight(.black),
+                    minHeight: 46,
+                    onTrigger: onStop
+                )
             }
         }
         .padding(11)
@@ -841,12 +829,15 @@ private struct EssentialActionPod: View, Equatable {
             VStack(spacing: 2) {
                 Text(slotCode)
                     .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .tracking(0.4)
                     .opacity(highlighted ? 0.85 : 0.72)
+                    .frame(maxWidth: .infinity)
                 Text(assignment.label)
                     .font(.system(size: 14, weight: .bold))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
             }
             .foregroundStyle(highlighted ? .white : color)
             .padding(.horizontal, 8)
@@ -972,12 +963,15 @@ private struct ShoulderPillButton: View, Equatable {
             VStack(spacing: 1) {
                 Text(slotCode)
                     .font(.system(size: isCompact ? 8.5 : 9, weight: .bold))
+                    .tracking(0.4)
                     .opacity(highlighted ? 0.85 : 0.72)
+                    .frame(maxWidth: .infinity)
                 Text(assignment.label)
                     .font(.system(size: isCompact ? 11 : 12, weight: .semibold))
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
                     .minimumScaleFactor(0.68)
+                    .frame(maxWidth: .infinity)
             }
             .foregroundStyle(highlighted ? .white : color)
             .frame(maxWidth: .infinity)
@@ -1039,9 +1033,14 @@ private struct AnalogSliderCard: View {
                     .lineLimit(1)
 
                 if !isCompact {
-                    Text("Pin \(config.primaryPin)")
-                        .font(.caption2)
+                    Text("P\(config.primaryPin)")
+                        .font(.caption2.weight(.semibold))
+                        .tracking(0.3)
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(.tertiarySystemFill))
+                        .clipShape(Capsule())
                         .lineLimit(1)
                 }
 
