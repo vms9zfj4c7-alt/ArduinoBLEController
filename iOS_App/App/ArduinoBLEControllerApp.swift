@@ -11,20 +11,20 @@ struct ArduinoBLEControllerApp: App {
 
     init() {
         let storage = ControllerStorageService()
-        let ble = BLEManager(initialBoardType: storage.selectedBoardPreference)
+        let connectionHub = ArduinoConnectionHub(initialBoardType: storage.selectedBoardPreference)
         let ps4 = PS4ControllerManager()
 
-        _scanViewModel = StateObject(wrappedValue: ScanViewModel(bleManager: ble))
+        _scanViewModel = StateObject(wrappedValue: ScanViewModel(connectionHub: connectionHub))
         _controllerViewModel = StateObject(
             wrappedValue: ControllerViewModel(
-                bleManager: ble,
+                connectionHub: connectionHub,
                 storageService: storage,
                 ps4Manager: ps4
             )
         )
         _mappingViewModel = StateObject(
             wrappedValue: MappingViewModel(
-                bleManager: ble,
+                connectionHub: connectionHub,
                 storageService: storage,
                 ps4Manager: ps4
             )

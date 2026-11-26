@@ -30,7 +30,17 @@
 // 1. CONFIGURATION UTILISATEUR (OPTIONNEL)
 // ============================================================================
 
-// Décommentez UNE de ces lignes uniquement si la détection automatique échoue :
+// Contrôle Wi-Fi TCP (décommentez CONTROL_MODE_WIFI pour utiliser le Wi-Fi au lieu du BLE)
+// Compatible ESP32 / Nano ESP32, Arduino Uno R4 WiFi, Nano 33 IoT, MKR WiFi 1010 :
+// #define CONTROL_MODE_WIFI
+//   WIFI_AP_MODE 1 = L'Arduino crée son propre Wi-Fi ("ArduinoBLE-WiFi", IP 192.168.4.1, port 8888)
+//   WIFI_AP_MODE 0 = L'Arduino se connecte à votre box Wi-Fi (+ découverte Bonjour sur iPhone)
+#define WIFI_AP_MODE 1
+#define WIFI_SSID    "ArduinoBLE-WiFi"
+#define WIFI_PASS    "12345678"
+#define WIFI_PORT    8888
+
+// Décommentez UNE de ces lignes uniquement si la détection automatique BLE échoue :
 // #define FORCE_BLE_MODE_ESP32
 // #define FORCE_BLE_MODE_ARDUINOBLE
 // #define FORCE_BLE_MODE_HM10
@@ -116,7 +126,20 @@ static const char* TX_CHAR_UUID = "beb5483f-36e1-4688-b7f5-ea07361b26a8";
 // 3. INCLUSIONS SPÉCIFIQUES À LA PLATEFORME
 // ============================================================================
 
-#if defined(BLE_MODE_ESP32)
+#if defined(CONTROL_MODE_WIFI)
+  #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+    #include <WiFi.h>
+    #include <ESPmDNS.h>
+  #elif defined(ARDUINO_UNOR4_WIFI)
+    #include <WiFiS3.h>
+    #include <Servo.h>
+  #elif defined(ARDUINO_SAMD_NANO_33_IOT) || defined(ARDUINO_SAMD_MKRWIFI1010)
+    #include <WiFiNINA.h>
+    #include <Servo.h>
+  #else
+    #error "CONTROL_MODE_WIFI nécessite une carte Wi-Fi intégrée (ESP32, Uno R4 WiFi, Nano 33 IoT ou MKR WiFi 1010)."
+  #endif
+#elif defined(BLE_MODE_ESP32)
   #include <BLEDevice.h>
   #include <BLEServer.h>
   #include <BLEUtils.h>
@@ -249,10 +272,95 @@ inline void feedIncomingByte(char c) {
 }
 
 // ============================================================================
-// 5. PILOTE BLE SELON L'ARCHITECTURE
+// 5. PILOTE TRANSPORT (WI-FI TCP OU BLE) SELON L'ARCHITECTURE
 // ============================================================================
 
-#if defined(BLE_MODE_ESP32)
+#if defined(CONTROL_MODE_WIFI)
+
+WiFiServer wifiServer(WIFI_PORT);
+WiFiClient activeWifiClient;
+IPAddress  wifiLocalIP(192, 168, 4, 1);
+
+void initBleTransport() {
+  #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+    #if WIFI_AP_MODE == 1
+      WiFi.mode(WIFI_AP);
+      WiFi.softAP(WIFI_SSID, WIFI_PASS);
+      delay(250);
+      wifiLocalIP = WiFi.softAPIP();
+    #else
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      unsigned long startWait = millis();
+      while (WiFi.status() != WL_CONNECTED && (millis() - startWait < 12000UL)) {
+        delay(250);
+      }
+      wifiLocalIP = WiFi.localIP();
+    #endif
+    if (MDNS.begin(DEVICE_NAME)) {
+      MDNS.addService("arduinowifi", "tcp", WIFI_PORT);
+    }
+  #else
+    #if WIFI_AP_MODE == 1
+      WiFi.beginAP(WIFI_SSID, WIFI_PASS);
+      delay(500);
+    #else
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      unsigned long startWait = millis();
+      while (WiFi.status() != WL_CONNECTED && (millis() - startWait < 12000UL)) {
+        delay(250);
+      }
+    #endif
+    wifiLocalIP = WiFi.localIP();
+  #endif
+
+  wifiServer.begin();
+}
+
+void pollBleTransport() {
+  #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+    if (wifiServer.hasClient()) {
+      if (activeWifiClient) {
+        activeWifiClient.stop();
+      }
+      activeWifiClient = wifiServer.available();
+      if (activeWifiClient) {
+        activeWifiClient.setNoDelay(true);
+        bleClientConnected = true;
+      }
+    }
+  #else
+    if (!activeWifiClient || !activeWifiClient.connected()) {
+      WiFiClient incoming = wifiServer.available();
+      if (incoming && incoming.connected()) {
+        activeWifiClient = incoming;
+        bleClientConnected = true;
+      }
+    }
+  #endif
+
+  if (activeWifiClient && activeWifiClient.connected()) {
+    bleClientConnected = true;
+    while (activeWifiClient.available() > 0) {
+      feedIncomingByte((char)activeWifiClient.read());
+    }
+  } else {
+    if (activeWifiClient) {
+      activeWifiClient.stop();
+    }
+    if (bleClientConnected) {
+      bleClientConnected = false;
+      pendingDisconnectCleanup = true;
+    }
+  }
+}
+
+void writeBlePacket(const uint8_t* data, size_t len) {
+  if (!bleClientConnected || !activeWifiClient || !activeWifiClient.connected()) return;
+  activeWifiClient.write(data, len);
+}
+
+#elif defined(BLE_MODE_ESP32)
 
 BLEServer*         pServer = nullptr;
 BLECharacteristic* pTxChar = nullptr;
@@ -434,11 +542,20 @@ void writeBlePacket(const uint8_t* data, size_t len) {
 
 #endif
 
-// Découpe automatiquement toute réponse en paquets <= 20 octets (compatible BLE 4.0 / HM-10)
+// Envoi complet sur Wi-Fi TCP, ou découpage <= 20 octets compatible BLE 4.0 / HM-10
 void sendBleLine(const char* line) {
   if (line == nullptr) return;
   size_t rawLen = strlen(line);
   if (rawLen == 0) return;
+
+  #if defined(CONTROL_MODE_WIFI)
+    writeBlePacket((const uint8_t*)line, rawLen);
+    if (line[rawLen - 1] != '\n') {
+      const uint8_t nl = '\n';
+      writeBlePacket(&nl, 1);
+    }
+    return;
+  #endif
 
   char packet[20];
   size_t offset = 0;
@@ -459,7 +576,7 @@ void sendBleLine(const char* line) {
 
     offset += chunkLen;
     if (offset < rawLen || needsNewline) {
-      #if defined(BLE_MODE_ARDUINOBLE)
+      #if !defined(CONTROL_MODE_WIFI) && defined(BLE_MODE_ARDUINOBLE)
         BLE.poll();
         delay(4);
       #elif defined(BLE_MODE_ESP32)
@@ -504,7 +621,7 @@ void sendBleLine_P(const char* progmemStr) {
         writeBlePacket((const uint8_t*)packet, chunkLen);
       }
       if (!ended) {
-        #if defined(BLE_MODE_ARDUINOBLE)
+        #if !defined(CONTROL_MODE_WIFI) && defined(BLE_MODE_ARDUINOBLE)
           BLE.poll();
           delay(4);
         #else
@@ -1017,8 +1134,18 @@ void setup() {
   Serial.println(F("========================================"));
   Serial.print(F("Carte détectée : "));
   Serial.println(F(BOARD_ID_STR));
-  Serial.print(F("Nom BLE        : "));
-  Serial.println(F(DEVICE_NAME));
+  #if defined(CONTROL_MODE_WIFI)
+    Serial.print(F("Transport      : Wi-Fi TCP (port "));
+    Serial.print(WIFI_PORT);
+    Serial.println(F(")"));
+    Serial.print(F("Réseau Wi-Fi   : "));
+    Serial.println(F(WIFI_SSID));
+    Serial.print(F("Adresse IP     : "));
+    Serial.println(wifiLocalIP);
+  #else
+    Serial.print(F("Nom BLE        : "));
+    Serial.println(F(DEVICE_NAME));
+  #endif
   Serial.println(F("En attente de connexion iPhone..."));
   Serial.println(F("========================================"));
 }
@@ -1029,12 +1156,20 @@ void loop() {
   if (pendingDisconnectCleanup) {
     pendingDisconnectCleanup = false;
     stopAllOutputs();
-    Serial.println(F("[BLE] Déconnecté -> arrêt de sécurité des sorties."));
+    #if defined(CONTROL_MODE_WIFI)
+      Serial.println(F("[Wi-Fi] Déconnecté -> arrêt de sécurité des sorties."));
+    #else
+      Serial.println(F("[BLE] Déconnecté -> arrêt de sécurité des sorties."));
+    #endif
   }
 
   if (bleClientConnected && !wasConnected) {
     wasConnected = true;
-    Serial.println(F("[BLE] Client iOS connecté."));
+    #if defined(CONTROL_MODE_WIFI)
+      Serial.println(F("[Wi-Fi] Client iOS connecté."));
+    #else
+      Serial.println(F("[BLE] Client iOS connecté."));
+    #endif
   } else if (!bleClientConnected && wasConnected) {
     wasConnected = false;
   }

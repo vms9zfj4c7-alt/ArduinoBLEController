@@ -6,6 +6,7 @@ import QuartzCore
 /// ViewModel haute performance pilotant l'écran manette, le pont manette PS4 -> BLE et la console.
 final class ControllerViewModel: ObservableObject {
     @Published private(set) var connectionState: BLEManager.ConnectionState = .disconnected
+    @Published private(set) var activeTransport: ConnectionTransport = .ble
     @Published private(set) var boardCapability: ArduinoBoardCapability
     @Published private(set) var activeProfileDescription: String = "Aucun profil"
     @Published private(set) var lastConnectedDeviceName: String?
@@ -22,11 +23,11 @@ final class ControllerViewModel: ObservableObject {
     @Published private(set) var toggledStates: [GamepadSlot: Bool] = [:]
     @Published private(set) var isSimplifiedMode: Bool = true
 
-    var logStore: BLELogStore { bleManager.logStore }
-    var telemetryStore: BLETelemetryStore { bleManager.telemetryStore }
+    var logStore: BLELogStore { connectionHub.logStore }
+    var telemetryStore: BLETelemetryStore { connectionHub.telemetryStore }
     let externalSliderUpdates = PassthroughSubject<(slot: GamepadSlot, value: Double), Never>()
 
-    private let bleManager: BLEManager
+    private let connectionHub: ArduinoConnectionHub
     private let storageService: ControllerStorageService
     private let ps4Manager: PS4ControllerManager
     private var cancellables: Set<AnyCancellable> = []
@@ -49,14 +50,15 @@ final class ControllerViewModel: ObservableObject {
     private let notificationHaptic = UINotificationFeedbackGenerator()
 
     init(
-        bleManager: BLEManager,
+        connectionHub: ArduinoConnectionHub,
         storageService: ControllerStorageService,
         ps4Manager: PS4ControllerManager
     ) {
-        self.bleManager = bleManager
+        self.connectionHub = connectionHub
         self.storageService = storageService
         self.ps4Manager = ps4Manager
-        self.boardCapability = bleManager.detectedBoardCapability
+        self.activeTransport = connectionHub.activeTransport
+        self.boardCapability = connectionHub.detectedBoardCapability
         self.assignments = storageService.assignments
         self.isSimplifiedMode = storageService.isSimplifiedMode
 
@@ -65,7 +67,7 @@ final class ControllerViewModel: ObservableObject {
         lightHaptic.prepare()
         mediumHaptic.prepare()
 
-        bindBLEManager()
+        bindConnectionHub()
         bindStorageService()
         bindPS4Controller()
     }
@@ -202,29 +204,29 @@ final class ControllerViewModel: ObservableObject {
         toggledStates.removeAll()
         momentaryPressedSlots.removeAll()
         lastSentSliderInt.removeAll()
-        bleManager.sendPrepared(BLEProtocolConstants.emergencyStopPacket, preferWithoutResponse: false)
+        connectionHub.sendPrepared(BLEProtocolConstants.emergencyStopPacket, preferWithoutResponse: false)
     }
 
     func sendRawCommand(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        bleManager.send(command: trimmed, preferWithoutResponse: false)
+        connectionHub.send(command: trimmed, preferWithoutResponse: false)
     }
 
     func reconnectLastDevice() {
-        bleManager.reconnectLastDevice()
+        connectionHub.reconnectLastDevice()
     }
 
     func requestTelemetry() {
-        bleManager.requestTelemetry()
+        connectionHub.requestTelemetry()
     }
 
     func clearLogs() {
-        bleManager.clearLogs()
+        connectionHub.clearLogs()
     }
 
     func disconnect() {
-        bleManager.disconnect()
+        connectionHub.disconnect()
     }
 
     func startPS4Discovery() {
@@ -243,10 +245,10 @@ final class ControllerViewModel: ObservableObject {
         storageService.setSimplifiedMode(enabled)
     }
 
-    /// Sécurise les sorties momentanées et met le BLE en veille lors du passage en arrière-plan.
+    /// Sécurise les sorties momentanées et met la radio en veille lors du passage en arrière-plan.
     func handleAppLifecycle(isActive: Bool) {
         if isActive {
-            bleManager.setAppActive(true)
+            connectionHub.setAppActive(true)
             ps4Manager.refreshConnectedControllers()
         } else {
             cancelAllPendingSliderFlushes()
@@ -254,14 +256,14 @@ final class ControllerViewModel: ObservableObject {
             for slot in held {
                 handleButtonUp(slot: slot)
             }
-            bleManager.setAppActive(false)
+            connectionHub.setAppActive(false)
         }
     }
 
     // MARK: - Liaisons internes
 
-    private func bindBLEManager() {
-        bleManager.$connectionState
+    private func bindConnectionHub() {
+        connectionHub.$connectionState
             .removeDuplicates()
             .sink { [weak self] newState in
                 guard let self else { return }
@@ -276,7 +278,11 @@ final class ControllerViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        bleManager.$detectedBoardCapability
+        connectionHub.$activeTransport
+            .removeDuplicates()
+            .assign(to: &$activeTransport)
+
+        connectionHub.$detectedBoardCapability
             .removeDuplicates()
             .sink { [weak self] capability in
                 guard let self else { return }
@@ -285,15 +291,15 @@ final class ControllerViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        bleManager.$activeProfileDescription
+        connectionHub.$activeProfileDescription
             .removeDuplicates()
             .assign(to: &$activeProfileDescription)
 
-        bleManager.$lastConnectedDeviceName
+        connectionHub.$lastConnectedDeviceName
             .removeDuplicates()
             .assign(to: &$lastConnectedDeviceName)
 
-        bleManager.$lastErrorMessage
+        connectionHub.$lastErrorMessage
             .removeDuplicates()
             .assign(to: &$errorMessage)
     }
@@ -370,7 +376,7 @@ final class ControllerViewModel: ObservableObject {
             self.handleSliderChanged(slot: slot, value: mapped, isFinal: isFinal)
         }
         ps4Manager.onStatusLog = { [weak self] message in
-            self?.bleManager.logStore.append(.info, message)
+            self?.connectionHub.logStore.append(.info, message)
         }
     }
 
@@ -381,11 +387,11 @@ final class ControllerViewModel: ObservableObject {
     ) {
         if let packets = cached {
             for packet in packets {
-                bleManager.sendPrepared(packet, preferWithoutResponse: preferWithoutResponse)
+                connectionHub.sendPrepared(packet, preferWithoutResponse: preferWithoutResponse)
             }
         } else {
             for command in fallbackCommands() {
-                bleManager.send(command: command, preferWithoutResponse: preferWithoutResponse)
+                connectionHub.send(command: command, preferWithoutResponse: preferWithoutResponse)
             }
         }
     }
@@ -399,12 +405,12 @@ final class ControllerViewModel: ObservableObject {
         lastSliderSendTime[slot] = timestamp
         lastSentSliderInt[slot] = intVal
         if let lookup = cachedSliderLookup[slot], intVal >= 0 && intVal < lookup.count {
-            bleManager.sendPrepared(lookup[intVal], preferWithoutResponse: preferWithoutResponse)
+            connectionHub.sendPrepared(lookup[intVal], preferWithoutResponse: preferWithoutResponse)
         } else {
             let config = assignment(for: slot)
             let commands = config.generateCommands(isActive: true, sliderValue: intVal)
             for command in commands {
-                bleManager.send(command: command, preferWithoutResponse: preferWithoutResponse)
+                connectionHub.send(command: command, preferWithoutResponse: preferWithoutResponse)
             }
         }
     }

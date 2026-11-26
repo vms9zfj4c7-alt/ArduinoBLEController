@@ -66,8 +66,8 @@ final class BLEManager: NSObject, ObservableObject {
     @Published var lastErrorMessage: String?
 
     /// Journal et télémétrie isolés pour éviter les re-rendus de la manette à chaque paquet TX/RX
-    let logStore = BLELogStore(maxEntries: 200)
-    let telemetryStore = BLETelemetryStore()
+    let logStore: BLELogStore
+    let telemetryStore: BLETelemetryStore
 
     private let lastDeviceIDKey = "arduino_ble_last_device_id_v1"
     private let lastDeviceNameKey = "arduino_ble_last_device_name_v1"
@@ -91,11 +91,7 @@ final class BLEManager: NSObject, ObservableObject {
     private var usedTargetedDiscovery: Bool = false
     private var didAttemptFullFallbackDiscovery: Bool = false
     private var didDiscoverFullCharScan: Bool = false
-    private var rxDataBuffer: Data = {
-        var data = Data()
-        data.reserveCapacity(128)
-        return data
-    }()
+    private let rxProcessor: ArduinoLineStreamProcessor
 
     private var scanTimeoutTimer: Timer?
     private var scanRefreshTimer: Timer?
@@ -103,14 +99,31 @@ final class BLEManager: NSObject, ObservableObject {
     private var rssiTimer: Timer?
     private var lastAutoDetectedCapability: ArduinoBoardCapability?
 
-    init(initialBoardType: ArduinoBoardType = .auto) {
+    init(
+        initialBoardType: ArduinoBoardType = .auto,
+        logStore: BLELogStore = BLELogStore(maxEntries: 200),
+        telemetryStore: BLETelemetryStore = BLETelemetryStore()
+    ) {
+        self.logStore = logStore
+        self.telemetryStore = telemetryStore
         self.manualBoardOverride = initialBoardType
         self.detectedBoardCapability = ArduinoBoardCapability.defaultCapability(
             for: initialBoardType == .auto ? .unoR4WiFi : initialBoardType,
             isAutoDetected: initialBoardType == .auto
         )
         self.lastConnectedDeviceName = UserDefaults.standard.string(forKey: lastDeviceNameKey)
+        self.rxProcessor = ArduinoLineStreamProcessor(logStore: logStore, telemetryStore: telemetryStore)
         super.init()
+        self.rxProcessor.onCapabilityDetected = { [weak self] capability in
+            guard let self else { return }
+            self.lastAutoDetectedCapability = capability
+            if self.manualBoardOverride == .auto && self.detectedBoardCapability != capability {
+                self.detectedBoardCapability = capability
+            }
+        }
+        self.rxProcessor.onErrorMessage = { [weak self] message in
+            self?.lastErrorMessage = message
+        }
         self.centralManager = CBCentralManager(delegate: self, queue: .main)
     }
 
@@ -270,6 +283,10 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        disconnect(silent: false)
+    }
+
+    func disconnect(silent: Bool) {
         invalidateTimers()
         let peripheralToDisconnect = connectedPeripheral
         connectedPeripheral = nil
@@ -278,11 +295,13 @@ final class BLEManager: NSObject, ObservableObject {
         if let peripheral = peripheralToDisconnect {
             centralManager.cancelPeripheralConnection(peripheral)
         }
-        appendLog(.info, "Déconnecté du périphérique.")
+        if !silent {
+            appendLog(.info, "Déconnecté du périphérique.")
+        }
     }
 
     func send(command: String, preferWithoutResponse: Bool = true) {
-        let packet = BLEPreparedCommand.make(command, coalesceKey: Self.inferCoalesceKey(for: command))
+        let packet = BLEPreparedCommand.make(command)
         sendPrepared(packet, preferWithoutResponse: preferWithoutResponse)
     }
 
@@ -362,19 +381,6 @@ final class BLEManager: NSObject, ObservableObject {
         pendingWithoutResponseQueue.append(packet)
     }
 
-    private static func inferCoalesceKey(for command: String) -> String? {
-        guard command.count >= 4 else { return nil }
-        let idx1 = command.index(after: command.startIndex)
-        guard command[idx1] == ":" else { return nil }
-        let kind = command[command.startIndex]
-        guard kind == "P" || kind == "V" || kind == "D" else { return nil }
-        let rest = command[command.index(after: idx1)...]
-        if let secondColon = rest.firstIndex(of: ":") {
-            return String(command[command.startIndex ... secondColon])
-        }
-        return nil
-    }
-
     func requestBoardInfo() {
         send(command: BLEProtocolConstants.infoQueryCommand, preferWithoutResponse: false)
     }
@@ -442,7 +448,7 @@ final class BLEManager: NSObject, ObservableObject {
         usedTargetedDiscovery = false
         didAttemptFullFallbackDiscovery = false
         didDiscoverFullCharScan = false
-        rxDataBuffer.removeAll(keepingCapacity: true)
+        rxProcessor.reset()
         telemetryStore.reset()
         activeProfileDescription = "Aucun profil"
         lastAutoDetectedCapability = nil
@@ -626,86 +632,7 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     private func handleIncomingData(_ data: Data) {
-        rxDataBuffer.append(data)
-
-        if rxDataBuffer.count > 512 && !rxDataBuffer.contains(0x0A) {
-            rxDataBuffer.removeAll(keepingCapacity: true)
-            return
-        }
-
-        var searchStart = rxDataBuffer.startIndex
-        while let newlineIdx = rxDataBuffer[searchStart...].firstIndex(of: 0x0A) {
-            var lineEnd = newlineIdx
-            if lineEnd > searchStart && rxDataBuffer[rxDataBuffer.index(before: lineEnd)] == 0x0D {
-                lineEnd = rxDataBuffer.index(before: lineEnd)
-            }
-            if searchStart < lineEnd {
-                let slice = rxDataBuffer[searchStart ..< lineEnd]
-                let line = String(decoding: slice, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !line.isEmpty {
-                    processReceivedLine(line)
-                }
-            }
-            searchStart = rxDataBuffer.index(after: newlineIdx)
-        }
-
-        if searchStart > rxDataBuffer.startIndex {
-            rxDataBuffer.removeSubrange(..<searchStart)
-        }
-    }
-
-    private func processReceivedLine(_ line: String) {
-        if line.hasPrefix("INFO:") {
-            appendLog(.rx, line)
-            if let capability = ArduinoBoardCapability.parse(infoLine: line) {
-                lastAutoDetectedCapability = capability
-                if manualBoardOverride == .auto && detectedBoardCapability != capability {
-                    detectedBoardCapability = capability
-                }
-                appendLog(.info, "Carte identifiée : \(capability.boardType.displayName) (\(capability.availablePins.count) broches)")
-            }
-            return
-        }
-
-        if line.hasPrefix("DATA:") {
-            parseTelemetryLine(line)
-            appendLog(.rx, line)
-            return
-        }
-
-        if line.hasPrefix("ERR:") {
-            appendLog(.error, line)
-            lastErrorMessage = "Arduino : \(line)"
-            return
-        }
-
-        appendLog(.rx, line)
-    }
-
-    private func parseTelemetryLine(_ line: String) {
-        var cursor = line.index(line.startIndex, offsetBy: 5) // Après "DATA:"
-        while cursor < line.endIndex {
-            let nextSemi = line[cursor...].firstIndex(of: ";") ?? line.endIndex
-            let part = line[cursor ..< nextSemi]
-            if let eqIdx = part.firstIndex(of: "=") {
-                let rawKey = part[..<eqIdx]
-                let rawVal = part[part.index(after: eqIdx)...]
-                let key = rawKey.trimmingCharacters(in: .whitespaces)
-                let val = rawVal.trimmingCharacters(in: .whitespaces)
-
-                if key == "T" || key.caseInsensitiveCompare("TEMP") == .orderedSame {
-                    if let temp = Double(val), telemetryStore.latestTemperature != temp {
-                        telemetryStore.latestTemperature = temp
-                    }
-                } else if key == "S" || key.caseInsensitiveCompare("SIM") == .orderedSame {
-                    let sim = (val == "1" || val.caseInsensitiveCompare("true") == .orderedSame)
-                    if telemetryStore.isTemperatureSimulated != sim {
-                        telemetryStore.isTemperatureSimulated = sim
-                    }
-                }
-            }
-            cursor = (nextSemi < line.endIndex) ? line.index(after: nextSemi) : line.endIndex
-        }
+        rxProcessor.ingest(data)
     }
 }
 

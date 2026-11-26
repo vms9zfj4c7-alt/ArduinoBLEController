@@ -37,6 +37,11 @@ enum BLEProtocolConstants {
         CBUUID(string: "180F")
     ]
 
+    // MARK: - Wi-Fi TCP & Bonjour (mDNS)
+    static let wifiBonjourServiceType = "_arduinowifi._tcp"
+    static let defaultWiFiPort: UInt16 = 8888
+    static let defaultWiFiAPHost = "192.168.4.1"
+
     // MARK: - Formatage des commandes compactes (<= 20 octets)
     static let infoQueryCommand = "I?\n"
     static let telemetryQueryCommand = "T?\n"
@@ -74,7 +79,20 @@ struct BLEPreparedCommand: Equatable {
         return BLEPreparedCommand(
             payload: Data(normalized.utf8),
             logText: cleaned,
-            coalesceKey: coalesceKey
+            coalesceKey: coalesceKey ?? inferCoalesceKey(for: cleaned)
         )
+    }
+
+    static func inferCoalesceKey(for command: String) -> String? {
+        guard command.count >= 4 else { return nil }
+        let idx1 = command.index(after: command.startIndex)
+        guard command[idx1] == ":" else { return nil }
+        let kind = command[command.startIndex]
+        guard kind == "P" || kind == "V" || kind == "D" else { return nil }
+        let rest = command[command.index(after: idx1)...]
+        if let secondColon = rest.firstIndex(of: ":") {
+            return String(command[command.startIndex ... secondColon])
+        }
+        return nil
     }
 }

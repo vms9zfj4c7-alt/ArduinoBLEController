@@ -323,6 +323,15 @@ struct ControllerView: View {
                         .layoutPriority(1)
 
                     HStack(spacing: 6) {
+                        Text(viewModel.activeTransport.shortBadge)
+                            .font(.caption2.weight(.bold))
+                            .tracking(0.3)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background((viewModel.activeTransport == .wifi ? Color.teal : Color.indigo).opacity(0.16))
+                            .foregroundStyle(viewModel.activeTransport == .wifi ? Color.teal : Color.indigo)
+                            .clipShape(Capsule())
+                            .fixedSize(horizontal: true, vertical: false)
                         Text(viewModel.boardCapability.boardType.shortBadge)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -622,6 +631,15 @@ struct ControllerView: View {
             Text(viewModel.connectionState.statusText)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
+
+            Text(viewModel.activeTransport.shortBadge)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(viewModel.activeTransport == .wifi ? Color.teal : Color.indigo)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background((viewModel.activeTransport == .wifi ? Color.teal : Color.indigo).opacity(0.16))
+                .clipShape(Capsule())
+                .fixedSize(horizontal: true, vertical: false)
 
             Text(viewModel.boardCapability.boardType.shortBadge)
                 .font(.caption2.weight(.semibold))

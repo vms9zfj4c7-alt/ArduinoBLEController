@@ -18,19 +18,19 @@ final class MappingViewModel: ObservableObject {
 
     @Published var selectedSlotForEditing: GamepadSlot?
 
-    private let bleManager: BLEManager
+    private let connectionHub: ArduinoConnectionHub
     private let storageService: ControllerStorageService
     private let ps4Manager: PS4ControllerManager
 
     init(
-        bleManager: BLEManager,
+        connectionHub: ArduinoConnectionHub,
         storageService: ControllerStorageService,
         ps4Manager: PS4ControllerManager
     ) {
-        self.bleManager = bleManager
+        self.connectionHub = connectionHub
         self.storageService = storageService
         self.ps4Manager = ps4Manager
-        self.boardCapability = bleManager.detectedBoardCapability
+        self.boardCapability = connectionHub.detectedBoardCapability
         self.selectedBoardPreference = storageService.selectedBoardPreference
         self.activePreset = storageService.activePreset
         self.assignments = storageService.assignments
@@ -38,14 +38,14 @@ final class MappingViewModel: ObservableObject {
         self.ps4RightStickAsSliders = storageService.ps4RightStickAsSliders
         self.isSimplifiedMode = storageService.isSimplifiedMode
 
-        // Applique au démarrage la préférence enregistrée au gestionnaire BLE
-        bleManager.setManualBoardOverride(storageService.selectedBoardPreference)
+        // Applique au démarrage la préférence enregistrée au gestionnaire de connexion
+        connectionHub.setManualBoardOverride(storageService.selectedBoardPreference)
 
-        bleManager.$detectedBoardCapability
+        connectionHub.$detectedBoardCapability
             .removeDuplicates()
             .assign(to: &$boardCapability)
 
-        bleManager.$connectionState
+        connectionHub.$connectionState
             .map { $0.isConnected }
             .removeDuplicates()
             .assign(to: &$isConnected)
@@ -93,8 +93,8 @@ final class MappingViewModel: ObservableObject {
 
     func selectBoardPreference(_ type: ArduinoBoardType) {
         storageService.setBoardPreference(type)
-        bleManager.setManualBoardOverride(type)
-        storageService.adaptIfNotCustomized(to: bleManager.detectedBoardCapability)
+        connectionHub.setManualBoardOverride(type)
+        storageService.adaptIfNotCustomized(to: connectionHub.detectedBoardCapability)
     }
 
     func applyPreset(_ preset: BuiltInPresetKind) {
@@ -127,7 +127,7 @@ final class MappingViewModel: ObservableObject {
     func testAssignment(_ assignment: ButtonAssignment, isActive: Bool = true) {
         let cmds = assignment.generateCommands(isActive: isActive)
         for cmd in cmds {
-            bleManager.send(command: cmd, preferWithoutResponse: false)
+            connectionHub.send(command: cmd, preferWithoutResponse: false)
         }
     }
 }

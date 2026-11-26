@@ -33,6 +33,7 @@ targets:
     dependencies:
       - sdk: CoreBluetooth.framework
       - sdk: GameController.framework
+      - sdk: Network.framework
     info:
       path: Config/Info.plist
       properties:
@@ -44,6 +45,9 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSBluetoothAlwaysUsageDescription: "Cette application utilise le Bluetooth Low Energy pour détecter et piloter votre carte Arduino."
         NSBluetoothPeripheralUsageDescription: "Cette application communique en Bluetooth avec votre carte Arduino."
+        NSLocalNetworkUsageDescription: "Cette application utilise le réseau Wi-Fi local pour détecter et piloter votre carte Arduino."
+        NSBonjourServices:
+          - _arduinowifi._tcp
         GCSupportedGameControllers:
           - ProfileName: ExtendedGamepad
         GCSupportsControllerUserInteraction: true
