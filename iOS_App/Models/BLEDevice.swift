@@ -1,7 +1,7 @@
 import Foundation
 import CoreBluetooth
 
-/// Représente un périphérique BLE découvert lors du scan, en fusionnant les paquets ADV_IND et SCAN_RSP.
+/// Représente un périphérique BLE découvert lors du scan, avec distance estimée et décodage fabricant/service.
 struct BLEDevice: Identifiable, Equatable {
     let id: UUID
     let rawName: String?
@@ -9,6 +9,7 @@ struct BLEDevice: Identifiable, Equatable {
     let advertisedServiceUUIDs: [CBUUID]
     let manufacturerID: UInt16?
     let manufacturerName: String?
+    let appleContinuityType: UInt8?
     let txPowerLevel: Int?
     let estimatedDistanceMeters: Double
     let baseRadarAngle: Double
@@ -32,6 +33,7 @@ struct BLEDevice: Identifiable, Equatable {
         advertisedServiceUUIDs: [CBUUID],
         manufacturerData: Data? = nil,
         manufacturerID: UInt16? = nil,
+        appleContinuityType: UInt8? = nil,
         txPowerLevel: Int? = nil,
         isConnectable: Bool = true,
         lastSeen: TimeInterval = CFAbsoluteTimeGetCurrent()
@@ -40,6 +42,12 @@ struct BLEDevice: Identifiable, Equatable {
         let cleanName = (trimmedName?.isEmpty == false) ? trimmedName : nil
 
         let resolvedMfrID = Self.parseManufacturerID(from: manufacturerData) ?? manufacturerID
+        let parsedAppleSubtype: UInt8?
+        if resolvedMfrID == 0x004C, let mfrData = manufacturerData, mfrData.count >= 3 {
+            parsedAppleSubtype = mfrData[mfrData.startIndex + 2]
+        } else {
+            parsedAppleSubtype = appleContinuityType
+        }
 
         let mfrName = resolvedMfrID.flatMap { Self.manufacturerDisplayName(for: $0) }
 
@@ -49,6 +57,7 @@ struct BLEDevice: Identifiable, Equatable {
         self.advertisedServiceUUIDs = advertisedServiceUUIDs
         self.manufacturerID = resolvedMfrID
         self.manufacturerName = mfrName
+        self.appleContinuityType = parsedAppleSubtype
         self.txPowerLevel = txPowerLevel
         self.estimatedDistanceMeters = Self.estimateDistanceMeters(rssi: rssi, txPowerLevel: txPowerLevel)
         self.baseRadarAngle = Self.deterministicAngle(for: id)
@@ -65,12 +74,19 @@ struct BLEDevice: Identifiable, Equatable {
 
         self.isLikelyArduino = hasKnownUUID || hasKeyword || hasArduinoSilicon
 
+        let appleFriendly = parsedAppleSubtype.flatMap { Self.appleContinuityDisplayName(for: $0) }
+        let standardServiceFriendly = Self.standardServiceName(from: advertisedServiceUUIDs)
+
         if let cleanName {
             self.displayName = cleanName
         } else if hasKnownUUID {
             self.displayName = "Module Arduino / BLE"
+        } else if let appleFriendly {
+            self.displayName = appleFriendly
         } else if let mfrName {
             self.displayName = "Appareil \(mfrName)"
+        } else if let standardServiceFriendly {
+            self.displayName = standardServiceFriendly
         } else {
             self.displayName = "Appareil BLE (\(id.uuidString.prefix(4)))"
         }
@@ -79,6 +95,8 @@ struct BLEDevice: Identifiable, Equatable {
             upperName: upper,
             serviceUUIDs: advertisedServiceUUIDs,
             manufacturerName: mfrName,
+            appleSubtypeName: appleFriendly,
+            standardServiceName: standardServiceFriendly,
             isConnectable: isConnectable
         )
     }
@@ -94,6 +112,7 @@ struct BLEDevice: Identifiable, Equatable {
             && lhs.txPowerLevel == rhs.txPowerLevel
             && lhs.rawName == rhs.rawName
             && lhs.manufacturerID == rhs.manufacturerID
+            && lhs.appleContinuityType == rhs.appleContinuityType
             && lhs.isConnectable == rhs.isConnectable
             && lhs.advertisedServiceUUIDs == rhs.advertisedServiceUUIDs
             && lhs.displayName == rhs.displayName
@@ -157,6 +176,8 @@ struct BLEDevice: Identifiable, Equatable {
         upperName: String,
         serviceUUIDs: [CBUUID],
         manufacturerName: String?,
+        appleSubtypeName: String?,
+        standardServiceName: String?,
         isConnectable: Bool
     ) -> String {
         if serviceUUIDs.contains(BLEProtocolConstants.customServiceUUID) {
@@ -174,6 +195,12 @@ struct BLEDevice: Identifiable, Equatable {
         if upperName.contains("HM") || upperName.contains("BT05") || upperName.contains("JDY") {
             return "Module série BLE"
         }
+        if let standardServiceName {
+            return isConnectable ? "\(standardServiceName) • Connectable" : standardServiceName
+        }
+        if let appleSubtypeName {
+            return isConnectable ? "Apple • \(appleSubtypeName)" : "Apple • \(appleSubtypeName) (balise)"
+        }
         if let mfr = manufacturerName {
             return isConnectable ? "\(mfr) • Connectable" : "\(mfr) • Balise"
         }
@@ -184,6 +211,36 @@ struct BLEDevice: Identifiable, Equatable {
         return isConnectable ? "Bluetooth Low Energy" : "Balise non connectable"
     }
 
+    private static func appleContinuityDisplayName(for typeByte: UInt8) -> String? {
+        switch typeByte {
+        case 0x02: return "Balise iBeacon"
+        case 0x07: return "Audio / AirPods"
+        case 0x09: return "Appareil AirPlay"
+        case 0x10: return "iPhone / Mac / iPad"
+        case 0x12: return "AirTag / Localiser"
+        case 0x05, 0x06, 0x0B, 0x0F: return "Accessoire Apple"
+        default: return nil
+        }
+    }
+
+    private static func standardServiceName(from serviceUUIDs: [CBUUID]) -> String? {
+        for uuid in serviceUUIDs {
+            switch uuid.uuidString.uppercased() {
+            case "180D": return "Capteur cardiaque"
+            case "1812": return "Périphérique HID / Manette"
+            case "1816": return "Capteur vélo"
+            case "1818": return "Capteur puissance"
+            case "181A": return "Capteur environnement"
+            case "180F": return "Service Batterie BLE"
+            case "FE9F": return "Google Fast Pair"
+            case "FEAA": return "Balise Eddystone"
+            case "FEED": return "Traceur Tile"
+            default: continue
+            }
+        }
+        return nil
+    }
+
     private static func manufacturerDisplayName(for companyID: UInt16) -> String? {
         switch companyID {
         case 0x004C: return "Apple"
@@ -191,16 +248,27 @@ struct BLEDevice: Identifiable, Equatable {
         case 0x0075: return "Samsung"
         case 0x00E0: return "Google"
         case 0x02E5: return "Espressif (ESP32)"
-        case 0x0059: return "Nordic"
+        case 0x0059: return "Nordic Semiconductor"
         case 0x000D: return "Texas Instruments / HM-10"
         case 0x012D: return "Sony"
+        case 0x0057: return "Harman / JBL"
         case 0x038F: return "Xiaomi"
         case 0x0087: return "Garmin"
         case 0x009E: return "Bose"
+        case 0x00A9: return "Beats"
         case 0x0157: return "Huawei"
+        case 0x010F: return "Honor / HiSilicon"
+        case 0x01DA: return "Logitech"
+        case 0x026B: return "Fitbit"
+        case 0x0553: return "Nintendo"
+        case 0x0822: return "Adafruit"
+        case 0x02FF: return "Silicon Labs"
+        case 0x0047: return "Raspberry Pi / Cypress"
         case 0x000A: return "Qualcomm"
         case 0x005D: return "Realtek"
         case 0x00D2: return "Dialog"
+        case 0x000F: return "Broadcom"
+        case 0x0002: return "Intel"
         default: return nil
         }
     }

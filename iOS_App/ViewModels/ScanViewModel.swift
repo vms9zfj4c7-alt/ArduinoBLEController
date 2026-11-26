@@ -5,22 +5,22 @@ import Combine
 /// ViewModel gérant l'écran de scan et de connexion aux cartes Arduino BLE.
 final class ScanViewModel: ObservableObject {
     enum FilterMode: Int, CaseIterable, Identifiable {
+        case all
         case namedOnly
         case arduinoOnly
-        case all
 
         var id: Int { rawValue }
 
         var title: String {
             switch self {
+            case .all: return "Tous"
             case .namedOnly: return "Nommés"
             case .arduinoOnly: return "Arduino"
-            case .all: return "Tous"
             }
         }
     }
 
-    @Published var filterMode: FilterMode = .namedOnly
+    @Published var filterMode: FilterMode = .all
     @Published var searchText: String = ""
     @Published var selectedDeviceID: UUID?
 

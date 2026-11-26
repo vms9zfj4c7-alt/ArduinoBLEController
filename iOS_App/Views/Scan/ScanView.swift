@@ -278,16 +278,22 @@ private struct DeviceRowView: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        let badgeColor: Color = device.isLikelyArduino
+            ? .accentColor
+            : (device.hasResolvedName ? .blue : .secondary)
+        let badgeCode = device.isLikelyArduino ? "ARD" : (device.hasResolvedName ? "NOM" : "BLE")
+
+        return HStack(spacing: 12) {
             Button(action: onSelect) {
                 HStack(spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .fill(device.isLikelyArduino ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12))
+                            .fill(badgeColor.opacity(0.14))
                             .frame(width: 44, height: 44)
-                        Text(device.isLikelyArduino ? "ARD" : "BLE")
+                        Text(badgeCode)
                             .font(.caption.weight(.black))
-                            .foregroundStyle(device.isLikelyArduino ? Color.accentColor : Color.secondary)
+                            .tracking(0.3)
+                            .foregroundStyle(badgeColor)
                     }
 
                     VStack(alignment: .leading, spacing: 3) {
@@ -329,11 +335,19 @@ private struct DeviceRowView: View, Equatable {
             if isConnecting {
                 ProgressView()
                     .padding(.horizontal, 8)
-            } else {
+            } else if device.isConnectable {
                 Button("Connecter", action: onConnect)
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+            } else {
+                Text("Balise")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(Capsule())
             }
         }
         .padding(.horizontal, 12)

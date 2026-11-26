@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Radar interactif temps réel positionnant chaque appareil BLE selon sa distance réelle estimée.
+/// Radar interactif plein écran positionnant tous les appareils BLE selon leur distance réelle estimée.
 struct BLERadarView: View {
     let devices: [BLEDevice]
     let selectedDeviceID: UUID?
@@ -11,12 +11,17 @@ struct BLERadarView: View {
     let onToggleScan: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     private static let radarRingsMeters: [Double] = [1.0, 3.0, 8.0, 15.0]
     private static let ringLabels: [String] = ["1 m", "3 m", "8 m", "15 m"]
 
     private var selectedDevice: BLEDevice? {
         devices.first { $0.id == selectedDeviceID }
+    }
+
+    private var radarHeight: CGFloat {
+        (verticalSizeClass == .compact) ? 268 : 338
     }
 
     var body: some View {
@@ -30,14 +35,14 @@ struct BLERadarView: View {
                 )
 
                 Text("Radar BLE")
-                    .font(.subheadline.weight(.bold))
+                    .font(.headline.weight(.bold))
                     .foregroundStyle(.white)
 
                 Text("\(devices.count)")
-                    .font(.caption2.monospacedDigit().weight(.bold))
+                    .font(.caption.monospacedDigit().weight(.bold))
                     .contentTransition(.numericText())
                     .foregroundStyle(.cyan)
-                    .padding(.horizontal, 7)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background(Color.cyan.opacity(0.18))
                     .clipShape(Capsule())
@@ -51,8 +56,8 @@ struct BLERadarView: View {
                     Text(isScanning ? "Pause" : "Scanner")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(isScanning ? Color.white : Color.black)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 6)
                         .background(
                             Capsule()
                                 .fill(isScanning ? Color.red.opacity(0.85) : Color.cyan)
@@ -61,7 +66,7 @@ struct BLERadarView: View {
                 .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.92))
             }
 
-            // Disque radar avec anneaux calibrés en mètres et balayage temps réel
+            // Grand disque radar animé à 60/120 Hz avec échos sonar synchronisés au faisceau
             GeometryReader { geo in
                 let diameter = min(geo.size.width, geo.size.height)
                 let maxR = diameter * 0.5
@@ -69,14 +74,14 @@ struct BLERadarView: View {
                 let blips = Self.layoutBlips(devices: devices, center: center, maxRadius: maxR)
 
                 ZStack {
-                    // Fond radial du radar
+                    // Fond sphérique océan profond
                     Circle()
                         .fill(
                             RadialGradient(
                                 colors: [
-                                    Color(red: 0.05, green: 0.24, blue: 0.31),
-                                    Color(red: 0.03, green: 0.13, blue: 0.20),
-                                    Color(red: 0.02, green: 0.08, blue: 0.13)
+                                    Color(red: 0.05, green: 0.25, blue: 0.34),
+                                    Color(red: 0.03, green: 0.14, blue: 0.22),
+                                    Color(red: 0.015, green: 0.07, blue: 0.12)
                                 ],
                                 center: .center,
                                 startRadius: 6,
@@ -84,103 +89,179 @@ struct BLERadarView: View {
                             )
                         )
                         .frame(width: diameter, height: diameter)
+                        .allowsHitTesting(false)
 
-                    // Faisceau rotatif fluide (60/120 Hz quand actif, désactivé si Réduire les animations)
-                    if isScanning && !reduceMotion {
-                        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isScanning || reduceMotion)) { context in
-                            let angle = Self.sweepAngleDegrees(for: context.date)
-                            Circle()
-                                .fill(
-                                    AngularGradient(
-                                        stops: [
-                                            .init(color: .clear, location: 0.0),
-                                            .init(color: .clear, location: 0.78),
-                                            .init(color: Color.cyan.opacity(0.10), location: 0.90),
-                                            .init(color: Color.cyan.opacity(0.32), location: 0.995),
-                                            .init(color: .clear, location: 1.0)
-                                        ],
-                                        center: .center,
-                                        angle: .degrees(angle)
+                    // Couche vectorielle haute fluidité : grille, graduations, onde sonar, faisceau et échos de passage
+                    TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isScanning || reduceMotion)) { context in
+                        let sweepDeg = Self.sweepAngleDegrees(for: context.date)
+                        let sonarPhase = Self.sonarWavePhase(for: context.date)
+
+                        ZStack {
+                            if isScanning && !reduceMotion {
+                                Circle()
+                                    .fill(
+                                        AngularGradient(
+                                            stops: [
+                                                .init(color: .clear, location: 0.0),
+                                                .init(color: .clear, location: 0.76),
+                                                .init(color: Color.cyan.opacity(0.06), location: 0.86),
+                                                .init(color: Color.cyan.opacity(0.28), location: 0.996),
+                                                .init(color: .clear, location: 1.0)
+                                            ],
+                                            center: .center,
+                                            angle: .degrees(sweepDeg)
+                                        )
                                     )
-                                )
-                                .frame(width: diameter, height: diameter)
-                                .allowsHitTesting(false)
+                                    .frame(width: diameter, height: diameter)
+                                    .allowsHitTesting(false)
+                            }
+
+                            Canvas { gc, canvasSize in
+                                let c = CGPoint(x: canvasSize.width * 0.5, y: canvasSize.height * 0.5)
+                                let rMax = min(canvasSize.width, canvasSize.height) * 0.5
+
+                                // 8 axes radiaux discrets
+                                for i in 0..<8 {
+                                    let ang = Double(i) * (.pi / 4.0)
+                                    var spoke = Path()
+                                    spoke.move(to: c)
+                                    spoke.addLine(to: CGPoint(x: c.x + rMax * CGFloat(cos(ang)), y: c.y + rMax * CGFloat(sin(ang))))
+                                    gc.stroke(spoke, with: .color(Color.cyan.opacity(i % 2 == 0 ? 0.14 : 0.07)), lineWidth: 0.9)
+                                }
+
+                                // 24 graduations périphériques style compas
+                                for tick in 0..<24 {
+                                    let ang = Double(tick) * (.pi / 12.0)
+                                    let isCardinal = (tick % 6 == 0)
+                                    let tickLen: CGFloat = isCardinal ? 9.0 : 4.5
+                                    let rIn = rMax - tickLen
+                                    var p = Path()
+                                    p.move(to: CGPoint(x: c.x + rIn * CGFloat(cos(ang)), y: c.y + rIn * CGFloat(sin(ang))))
+                                    p.addLine(to: CGPoint(x: c.x + rMax * CGFloat(cos(ang)), y: c.y + rMax * CGFloat(sin(ang))))
+                                    gc.stroke(p, with: .color(Color.cyan.opacity(isCardinal ? 0.45 : 0.22)), lineWidth: isCardinal ? 1.4 : 0.9)
+                                }
+
+                                // Anneaux intermédiaires pointillés (0.5 m, 2 m, 5.5 m)
+                                for subMeters in [0.5, 2.0, 5.5] {
+                                    let subR = Self.normalizedRadius(forMeters: subMeters) * rMax
+                                    let rect = CGRect(x: c.x - subR, y: c.y - subR, width: subR * 2, height: subR * 2)
+                                    gc.stroke(
+                                        Path(ellipseIn: rect),
+                                        with: .color(Color.cyan.opacity(0.09)),
+                                        style: StrokeStyle(lineWidth: 0.8, dash: [3, 5])
+                                    )
+                                }
+
+                                // Anneaux principaux calibrés en mètres
+                                for (idx, meters) in Self.radarRingsMeters.enumerated() {
+                                    let ringR = Self.normalizedRadius(forMeters: meters) * rMax
+                                    let rect = CGRect(x: c.x - ringR, y: c.y - ringR, width: ringR * 2, height: ringR * 2)
+                                    let isOuter = (idx == Self.radarRingsMeters.count - 1)
+                                    gc.stroke(
+                                        Path(ellipseIn: rect),
+                                        with: .color(Color.cyan.opacity(isOuter ? 0.34 : 0.22)),
+                                        lineWidth: isOuter ? 1.4 : 1.0
+                                    )
+                                }
+
+                                if isScanning && !reduceMotion {
+                                    // Onde sonar concentrique sortante
+                                    let waveR = max(6.0, CGFloat(sonarPhase) * rMax)
+                                    let waveAlpha = (1.0 - sonarPhase) * 0.46
+                                    let waveRect = CGRect(x: c.x - waveR, y: c.y - waveR, width: waveR * 2, height: waveR * 2)
+                                    gc.stroke(
+                                        Path(ellipseIn: waveRect),
+                                        with: .color(Color.cyan.opacity(waveAlpha)),
+                                        lineWidth: CGFloat(2.0 - sonarPhase)
+                                    )
+
+                                    // Aiguille lumineuse du faisceau
+                                    let sweepRad = sweepDeg * .pi / 180.0
+                                    var needle = Path()
+                                    needle.move(to: c)
+                                    needle.addLine(to: CGPoint(
+                                        x: c.x + rMax * CGFloat(cos(sweepRad)),
+                                        y: c.y + rMax * CGFloat(sin(sweepRad))
+                                    ))
+                                    gc.stroke(needle, with: .color(Color.cyan.opacity(0.88)), lineWidth: 2.0)
+
+                                    // Écho radar lumineux sur chaque point traversé par le faisceau
+                                    for blip in blips {
+                                        let diff = Self.positiveAngleDiff(sweepDeg: sweepDeg, blipDeg: blip.angleDeg)
+                                        if diff < 62.0 {
+                                            let p = diff / 62.0
+                                            let echoR = CGFloat(6.0 + p * 22.0)
+                                            let echoRect = CGRect(
+                                                x: blip.point.x - echoR,
+                                                y: blip.point.y - echoR,
+                                                width: echoR * 2,
+                                                height: echoR * 2
+                                            )
+                                            let echoColor: Color = blip.device.isLikelyArduino ? .cyan : Color(red: 0.48, green: 0.78, blue: 1.0)
+                                            gc.stroke(
+                                                Path(ellipseIn: echoRect),
+                                                with: .color(echoColor.opacity((1.0 - p) * 0.78)),
+                                                lineWidth: 1.6
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .allowsHitTesting(false)
                         }
                     }
 
-                    // Axes orthogonaux
-                    Rectangle()
-                        .fill(Color.cyan.opacity(0.12))
-                        .frame(width: 1, height: diameter)
-                        .allowsHitTesting(false)
-                    Rectangle()
-                        .fill(Color.cyan.opacity(0.12))
-                        .frame(width: diameter, height: 1)
-                        .allowsHitTesting(false)
-
-                    // Anneaux concentriques calibrés en mètres
+                    // Étiquettes de portée calibrées
                     ForEach(Array(Self.radarRingsMeters.enumerated()), id: \.offset) { idx, meters in
                         let ringR = Self.normalizedRadius(forMeters: meters) * maxR
-                        Circle()
-                            .strokeBorder(
-                                Color.cyan.opacity(idx == Self.radarRingsMeters.count - 1 ? 0.34 : 0.20),
-                                lineWidth: 1
-                            )
-                            .frame(width: ringR * 2, height: ringR * 2)
-                            .allowsHitTesting(false)
-
                         Text(Self.ringLabels[idx])
-                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                             .tracking(0.3)
-                            .foregroundStyle(Color.cyan.opacity(0.78))
+                            .foregroundStyle(Color.cyan.opacity(0.86))
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color(red: 0.02, green: 0.10, blue: 0.16).opacity(0.85))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Color(red: 0.02, green: 0.10, blue: 0.16).opacity(0.88))
                             .clipShape(Capsule())
                             .position(x: center.x, y: center.y - ringR)
                             .allowsHitTesting(false)
                     }
 
-                    // Bordure extérieure
-                    Circle()
-                        .strokeBorder(Color.cyan.opacity(0.32), lineWidth: 1.4)
-                        .frame(width: diameter, height: diameter)
-                        .allowsHitTesting(false)
-
-                    // Point central (iPhone)
+                    // Point central (iPhone / origine 0 m)
                     ZStack {
                         Circle()
-                            .fill(Color.white.opacity(0.18))
-                            .frame(width: 18, height: 18)
+                            .fill(Color.white.opacity(0.20))
+                            .frame(width: 20, height: 20)
                         Circle()
                             .fill(Color.white)
-                            .frame(width: 8, height: 8)
+                            .frame(width: 9, height: 9)
+                            .shadow(color: .white.opacity(0.75), radius: 4)
                     }
                     .position(center)
                     .allowsHitTesting(false)
 
-                    // Points cliquables représentant chaque appareil BLE détecté
+                    // Points interactifs pour chaque appareil BLE
                     ForEach(blips) { blip in
                         let isSelected = (blip.device.id == selectedDeviceID)
                         RadarBlipView(
                             blip: blip,
                             isSelected: isSelected,
-                            showLabel: isSelected || (blip.device.isLikelyArduino && blips.count <= 8),
+                            showLabel: isSelected || (blip.device.isLikelyArduino && blips.count <= 10),
                             containerSize: geo.size,
                             onTap: {
-                                if isSelected {
+                                if isSelected && blip.device.isConnectable {
                                     AppHaptics.medium()
                                     onConnectDevice(blip.device)
                                 } else {
                                     AppHaptics.selection()
-                                    withAnimation(AppleMotion.fluidSpring) {
+                                    withAnimation(AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion)) {
                                         onSelectDevice(blip.device)
                                     }
                                 }
                             }
                         )
-                        .zIndex(isSelected ? 10 : (blip.device.isLikelyArduino ? 2 : 0))
+                        .zIndex(isSelected ? 10 : (blip.device.isLikelyArduino ? 3 : (blip.device.hasResolvedName ? 2 : 1)))
                     }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -189,19 +270,28 @@ struct BLERadarView: View {
                     value: blips.map(\.positionSignature)
                 )
             }
-            .frame(height: 248)
+            .frame(height: radarHeight)
 
-            // Fiche directe sous le radar pour connecter l'appareil choisi en 1 appui
+            // Légende discrète des catégories détectées
+            HStack(spacing: 14) {
+                legendItem(color: .cyan, label: "Arduino")
+                legendItem(color: Color(red: 0.32, green: 0.68, blue: 1.0), label: "Nommé")
+                legendItem(color: Color(red: 0.62, green: 0.66, blue: 0.96), label: "Balise BLE")
+            }
+            .frame(maxWidth: .infinity)
+
+            // Fiche de l'appareil choisi sous le radar
             Group {
                 if let device = selectedDevice {
                     HStack(spacing: 12) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(device.isLikelyArduino ? Color.cyan.opacity(0.22) : Color.white.opacity(0.12))
-                                .frame(width: 40, height: 40)
-                            Text(device.isLikelyArduino ? "ARD" : "BLE")
+                                .fill(badgeColor(for: device).opacity(0.20))
+                                .frame(width: 42, height: 42)
+                            Text(badgeCode(for: device))
                                 .font(.caption2.weight(.black))
-                                .foregroundStyle(device.isLikelyArduino ? Color.cyan : Color.white.opacity(0.85))
+                                .tracking(0.3)
+                                .foregroundStyle(badgeColor(for: device))
                         }
 
                         VStack(alignment: .leading, spacing: 2) {
@@ -222,32 +312,41 @@ struct BLERadarView: View {
                                     .monospacedDigit()
                             }
                             .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.75))
+                            .foregroundStyle(.white.opacity(0.78))
                             .lineLimit(1)
                         }
 
                         Spacer(minLength: 4)
 
-                        Button {
-                            AppHaptics.medium()
-                            onConnectDevice(device)
-                        } label: {
-                            Group {
-                                if isConnecting {
-                                    ProgressView()
-                                        .tint(.black)
-                                } else {
-                                    Text("Connecter")
-                                        .font(.caption.weight(.bold))
+                        if device.isConnectable {
+                            Button {
+                                AppHaptics.medium()
+                                onConnectDevice(device)
+                            } label: {
+                                Group {
+                                    if isConnecting {
+                                        ProgressView()
+                                            .tint(.black)
+                                    } else {
+                                        Text("Connecter")
+                                            .font(.caption.weight(.bold))
+                                    }
                                 }
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Capsule().fill(Color.cyan))
                             }
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(Capsule().fill(Color.cyan))
+                            .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.92))
+                            .disabled(isConnecting)
+                        } else {
+                            Text("Balise")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.72))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(Color.white.opacity(0.12)))
                         }
-                        .buttonStyle(TactileScaleButtonStyle(pressedScale: 0.92))
-                        .disabled(isConnecting)
                     }
                     .padding(10)
                     .background(
@@ -258,32 +357,32 @@ struct BLERadarView: View {
                                     .strokeBorder(Color.cyan.opacity(0.35), lineWidth: 1)
                             )
                     )
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 } else {
                     Text(
                         devices.isEmpty
-                            ? (isScanning ? "Détection des appareils Bluetooth autour de vous..." : "Appuyez sur Scanner pour repérer les appareils")
-                            : "Touchez un point sur le radar pour choisir un appareil"
+                            ? (isScanning ? "Détection de tous les appareils BLE à proximité..." : "Appuyez sur Scanner pour repérer les appareils")
+                            : "Touchez un point sur le radar pour voir sa distance et vous connecter"
                     )
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(.white.opacity(0.75))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 8)
                     .transition(.opacity)
                 }
             }
-            .animation(AppleMotion.fluidSpring, value: selectedDevice?.id)
-            .animation(AppleMotion.fluidSpring, value: isConnecting)
+            .animation(AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion), value: selectedDevice?.id)
+            .animation(AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion), value: isConnecting)
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
                             Color(red: 0.04, green: 0.14, blue: 0.22),
-                            Color(red: 0.03, green: 0.09, blue: 0.15)
+                            Color(red: 0.025, green: 0.08, blue: 0.14)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -291,18 +390,52 @@ struct BLERadarView: View {
                 )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(Color.cyan.opacity(0.24), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(Color.cyan.opacity(0.28), lineWidth: 1.1)
         )
-        .shadow(color: Color.black.opacity(0.18), radius: 12, y: 4)
+        .shadow(color: Color.black.opacity(0.22), radius: 14, y: 5)
+    }
+
+    private func legendItem(color: Color, label: String) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.white.opacity(0.72))
+        }
+    }
+
+    private func badgeColor(for device: BLEDevice) -> Color {
+        if device.isLikelyArduino { return .cyan }
+        if device.hasResolvedName { return Color(red: 0.38, green: 0.72, blue: 1.0) }
+        return Color(red: 0.65, green: 0.70, blue: 0.98)
+    }
+
+    private func badgeCode(for device: BLEDevice) -> String {
+        if device.isLikelyArduino { return "ARD" }
+        if device.hasResolvedName { return "NOM" }
+        return "BLE"
     }
 
     // MARK: - Géométrie du radar
 
     private static func sweepAngleDegrees(for date: Date) -> Double {
-        let cycle = 3.2
+        let cycle = 3.0
         let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: cycle) / cycle
         return phase * 360.0
+    }
+
+    private static func sonarWavePhase(for date: Date) -> Double {
+        let cycle = 2.6
+        return date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: cycle) / cycle
+    }
+
+    private static func positiveAngleDiff(sweepDeg: Double, blipDeg: Double) -> Double {
+        var diff = (sweepDeg - blipDeg).truncatingRemainder(dividingBy: 360.0)
+        if diff < 0 { diff += 360.0 }
+        return diff
     }
 
     /// Mapping logarithmique continu [0.2 m .. 25 m] aligné sur les anneaux 1m / 3m / 8m / 15m.
@@ -315,6 +448,7 @@ struct BLERadarView: View {
     private struct PositionedBlip: Identifiable {
         let device: BLEDevice
         let point: CGPoint
+        let angleDeg: Double
 
         var id: UUID { device.id }
 
@@ -329,13 +463,13 @@ struct BLERadarView: View {
         maxRadius: CGFloat
     ) -> [PositionedBlip] {
         guard maxRadius > 20 else { return [] }
-        let limited = Array(devices.prefix(24)).sorted { $0.id.uuidString < $1.id.uuidString }
+        let limited = Array(devices.prefix(36)).sorted { $0.id.uuidString < $1.id.uuidString }
         var placed: [PositionedBlip] = []
         placed.reserveCapacity(limited.count)
 
-        let minSeparation: CGFloat = 28.0
+        let minSeparation: CGFloat = 26.0
         let angleOffsets: [Double] = [
-            0.0, 0.42, -0.42, 0.84, -0.84, 1.26, -1.26, 1.68, -1.68, 2.1, -2.1, 2.52, -2.52
+            0.0, 0.36, -0.36, 0.72, -0.72, 1.08, -1.08, 1.44, -1.44, 1.80, -1.80, 2.20, -2.20, 2.65, -2.65
         ]
 
         for device in limited {
@@ -346,8 +480,9 @@ struct BLERadarView: View {
                 x: center.x + baseR * CGFloat(cos(baseAngle)),
                 y: center.y + baseR * CGFloat(sin(baseAngle))
             )
+            var chosenAngle = baseAngle
 
-            outer: for rShift in [CGFloat(0), CGFloat(10), CGFloat(-10), CGFloat(18)] {
+            outer: for rShift in [CGFloat(0), CGFloat(10), CGFloat(-10), CGFloat(20), CGFloat(-18)] {
                 let candidateR = min(max(baseR + rShift, maxRadius * 0.14), maxRadius * 0.93)
                 for offset in angleOffsets {
                     let candidateAngle = baseAngle + offset
@@ -360,12 +495,19 @@ struct BLERadarView: View {
                     }
                     if !overlaps {
                         chosenPoint = candidate
+                        chosenAngle = candidateAngle
                         break outer
                     }
                 }
             }
 
-            placed.append(PositionedBlip(device: device, point: chosenPoint))
+            placed.append(
+                PositionedBlip(
+                    device: device,
+                    point: chosenPoint,
+                    angleDeg: chosenAngle * 180.0 / .pi
+                )
+            )
         }
 
         return placed
@@ -380,23 +522,26 @@ struct BLERadarView: View {
 
         var body: some View {
             let isArduino = blip.device.isLikelyArduino
-            let dotColor: Color = isArduino ? .cyan : Color(red: 0.62, green: 0.78, blue: 0.86)
-            let dotSize: CGFloat = isArduino ? 14 : 10
+            let dotColor: Color = isArduino
+                ? .cyan
+                : (blip.device.hasResolvedName ? Color(red: 0.32, green: 0.68, blue: 1.0) : Color(red: 0.64, green: 0.68, blue: 0.96))
+            let dotSize: CGFloat = isArduino ? 15 : (blip.device.hasResolvedName ? 12 : 9.5)
             let showBelow = blip.point.y < 38
-            let clampedLabelX = min(max(blip.point.x, 54), max(54, containerSize.width - 54))
-            let labelY = showBelow ? (blip.point.y + 22) : (blip.point.y - 22)
+            let clampedLabelX = min(max(blip.point.x, 56), max(56, containerSize.width - 56))
+            let labelY = showBelow ? (blip.point.y + 23) : (blip.point.y - 23)
 
             ZStack {
                 if showLabel {
                     Text(isSelected ? "\(blip.device.displayName) • \(blip.device.formattedDistance)" : blip.device.formattedDistance)
                         .font(.system(size: isSelected ? 10 : 9, weight: isSelected ? .bold : .semibold))
+                        .multilineTextAlignment(.center)
                         .lineLimit(1)
                         .foregroundStyle(isSelected ? .black : .white)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(
                             Capsule()
-                                .fill(isSelected ? Color.cyan : Color.black.opacity(0.68))
+                                .fill(isSelected ? Color.cyan : Color.black.opacity(0.72))
                         )
                         .position(x: clampedLabelX, y: labelY)
                         .allowsHitTesting(false)
@@ -407,19 +552,19 @@ struct BLERadarView: View {
                         if isSelected {
                             Circle()
                                 .strokeBorder(Color.white, lineWidth: 2)
-                                .frame(width: dotSize + 14, height: dotSize + 14)
+                                .frame(width: dotSize + 15, height: dotSize + 15)
                         }
 
-                        if isArduino {
+                        if isArduino || blip.device.hasResolvedName {
                             Circle()
-                                .fill(dotColor.opacity(0.28))
+                                .fill(dotColor.opacity(isArduino ? 0.32 : 0.20))
                                 .frame(width: dotSize + 10, height: dotSize + 10)
                         }
 
                         Circle()
                             .fill(isSelected ? Color.white : dotColor)
                             .frame(width: dotSize, height: dotSize)
-                            .shadow(color: dotColor.opacity(0.75), radius: 5)
+                            .shadow(color: dotColor.opacity(0.80), radius: isArduino ? 6 : 3)
                     }
                     .frame(width: 44, height: 44)
                     .contentShape(Circle())

@@ -140,19 +140,27 @@ final class BLEManager: NSObject, ObservableObject {
         connectionState = .scanning
         appendLog(.info, "Démarrage du scan BLE...")
 
-        // Inclure aussi les cartes déjà connectées au niveau iOS
+        // Inclure aussi les cartes et accessoires BLE déjà connectés au niveau iOS
+        let connectedLookupServices = BLEProtocolConstants.knownArduinoServiceUUIDs + [
+            CBUUID(string: "1800"),
+            CBUUID(string: "180A"),
+            CBUUID(string: "180F"),
+            CBUUID(string: "1812"),
+            CBUUID(string: "180D")
+        ]
         let alreadyConnected = centralManager.retrieveConnectedPeripherals(
-            withServices: BLEProtocolConstants.knownArduinoServiceUUIDs
+            withServices: connectedLookupServices
         )
         let now = CFAbsoluteTimeGetCurrent()
         for peripheral in alreadyConnected {
             peripheralsByID[peripheral.identifier] = peripheral
             lastSeenTimestamps[peripheral.identifier] = now
+            let knownServices = peripheral.services?.map(\.uuid) ?? []
             let device = BLEDevice(
                 id: peripheral.identifier,
                 rawName: peripheral.name,
-                rssi: -50,
-                advertisedServiceUUIDs: BLEProtocolConstants.knownArduinoServiceUUIDs,
+                rssi: -48,
+                advertisedServiceUUIDs: knownServices.isEmpty ? [CBUUID(string: "180A")] : knownServices,
                 isConnectable: true,
                 lastSeen: now
             )
@@ -174,11 +182,11 @@ final class BLEManager: NSObject, ObservableObject {
         }
 
         scanTimeoutTimer?.invalidate()
-        scanTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: false) { [weak self] _ in
+        scanTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 45.0, repeats: false) { [weak self] _ in
             guard let self else { return }
             if case .scanning = self.connectionState {
                 self.stopScan()
-                self.appendLog(.info, "Scan terminé automatiquement (20 s).")
+                self.appendLog(.info, "Scan terminé automatiquement (45 s).")
             }
         }
     }
@@ -465,7 +473,7 @@ final class BLEManager: NSObject, ObservableObject {
     private func flushScanUpdatesIfNeeded() {
         let now = CFAbsoluteTimeGetCurrent()
         var removedStale = false
-        for (id, seenAt) in lastSeenTimestamps where (now - seenAt) > 12.0 {
+        for (id, seenAt) in lastSeenTimestamps where (now - seenAt) > 20.0 {
             lastSeenTimestamps.removeValue(forKey: id)
             if devicesByID.removeValue(forKey: id) != nil {
                 removedStale = true
@@ -478,11 +486,11 @@ final class BLEManager: NSObject, ObservableObject {
             if lhs.isLikelyArduino != rhs.isLikelyArduino {
                 return lhs.isLikelyArduino && !rhs.isLikelyArduino
             }
-            if lhs.isConnectable != rhs.isConnectable {
-                return lhs.isConnectable && !rhs.isConnectable
-            }
             if lhs.hasResolvedName != rhs.hasResolvedName {
                 return lhs.hasResolvedName && !rhs.hasResolvedName
+            }
+            if lhs.isConnectable != rhs.isConnectable {
+                return lhs.isConnectable && !rhs.isConnectable
             }
             return lhs.rssi > rhs.rssi
         }
@@ -805,6 +813,7 @@ extension BLEManager: CBCentralManagerDelegate {
             advertisedServiceUUIDs: mergedUUIDs,
             manufacturerData: manufacturerData,
             manufacturerID: existing?.manufacturerID,
+            appleContinuityType: existing?.appleContinuityType,
             txPowerLevel: incomingTxPower,
             isConnectable: connectableFlag,
             lastSeen: now
