@@ -223,19 +223,22 @@ struct BLEDevice: Identifiable, Equatable {
         }
     }
 
+    private static let standardServiceNames: [CBUUID: String] = [
+        CBUUID(string: "180D"): "Capteur cardiaque",
+        CBUUID(string: "1812"): "Périphérique HID / Manette",
+        CBUUID(string: "1816"): "Capteur vélo",
+        CBUUID(string: "1818"): "Capteur puissance",
+        CBUUID(string: "181A"): "Capteur environnement",
+        CBUUID(string: "180F"): "Service Batterie BLE",
+        CBUUID(string: "FE9F"): "Google Fast Pair",
+        CBUUID(string: "FEAA"): "Balise Eddystone",
+        CBUUID(string: "FEED"): "Traceur Tile"
+    ]
+
     private static func standardServiceName(from serviceUUIDs: [CBUUID]) -> String? {
         for uuid in serviceUUIDs {
-            switch uuid.uuidString.uppercased() {
-            case "180D": return "Capteur cardiaque"
-            case "1812": return "Périphérique HID / Manette"
-            case "1816": return "Capteur vélo"
-            case "1818": return "Capteur puissance"
-            case "181A": return "Capteur environnement"
-            case "180F": return "Service Batterie BLE"
-            case "FE9F": return "Google Fast Pair"
-            case "FEAA": return "Balise Eddystone"
-            case "FEED": return "Traceur Tile"
-            default: continue
+            if let label = standardServiceNames[uuid] {
+                return label
             }
         }
         return nil

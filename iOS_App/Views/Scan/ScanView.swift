@@ -81,6 +81,7 @@ struct ScanView: View {
                                 viewModel.toggleScan()
                             }
                         )
+                        .equatable()
 
                         // Liste complémentaire triée par proximité
                         if !viewModel.filteredDevices.isEmpty {

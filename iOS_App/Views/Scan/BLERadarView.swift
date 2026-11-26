@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Radar interactif plein écran positionnant tous les appareils BLE selon leur distance réelle estimée.
-struct BLERadarView: View {
+struct BLERadarView: View, Equatable {
     let devices: [BLEDevice]
     let selectedDeviceID: UUID?
     let isScanning: Bool
@@ -9,6 +9,13 @@ struct BLERadarView: View {
     let onSelectDevice: (BLEDevice) -> Void
     let onConnectDevice: (BLEDevice) -> Void
     let onToggleScan: () -> Void
+
+    static func == (lhs: BLERadarView, rhs: BLERadarView) -> Bool {
+        lhs.devices == rhs.devices
+            && lhs.selectedDeviceID == rhs.selectedDeviceID
+            && lhs.isScanning == rhs.isScanning
+            && lhs.isConnecting == rhs.isConnecting
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -267,7 +274,7 @@ struct BLERadarView: View {
                 .frame(width: geo.size.width, height: geo.size.height)
                 .animation(
                     AppleMotion.adaptive(AppleMotion.fluidSpring, reduceMotion: reduceMotion),
-                    value: blips.map(\.positionSignature)
+                    value: blips.map(\.positionKey)
                 )
             }
             .frame(height: radarHeight)
@@ -445,16 +452,30 @@ struct BLERadarView: View {
         return CGFloat(0.14 + norm * 0.78)
     }
 
+    private struct BlipPositionKey: Equatable {
+        let id: UUID
+        let qx: Int
+        let qy: Int
+    }
+
     private struct PositionedBlip: Identifiable {
         let device: BLEDevice
         let point: CGPoint
         let angleDeg: Double
+        let positionKey: BlipPositionKey
 
         var id: UUID { device.id }
+    }
 
-        var positionSignature: String {
-            "\(device.id.uuidString)-\(Int(point.x.rounded()))-\(Int(point.y.rounded()))"
-        }
+    private static let layoutAngleOffsets: [Double] = [
+        0.0, 0.36, -0.36, 0.72, -0.72, 1.08, -1.08, 1.44, -1.44, 1.80, -1.80, 2.20, -2.20, 2.65, -2.65
+    ]
+    private static let layoutRadiusShifts: [CGFloat] = [0, 10, -10, 20, -18]
+
+    private static func uuidLessThan(_ lhs: UUID, _ rhs: UUID) -> Bool {
+        var lu = lhs.uuid
+        var ru = rhs.uuid
+        return memcmp(&lu, &ru, 16) < 0
     }
 
     private static func layoutBlips(
@@ -463,14 +484,16 @@ struct BLERadarView: View {
         maxRadius: CGFloat
     ) -> [PositionedBlip] {
         guard maxRadius > 20 else { return [] }
-        let limited = Array(devices.prefix(36)).sorted { $0.id.uuidString < $1.id.uuidString }
+        let limited = devices.prefix(36).sorted { lhs, rhs in
+            if lhs.baseRadarAngle != rhs.baseRadarAngle {
+                return lhs.baseRadarAngle < rhs.baseRadarAngle
+            }
+            return uuidLessThan(lhs.id, rhs.id)
+        }
         var placed: [PositionedBlip] = []
         placed.reserveCapacity(limited.count)
 
         let minSeparation: CGFloat = 26.0
-        let angleOffsets: [Double] = [
-            0.0, 0.36, -0.36, 0.72, -0.72, 1.08, -1.08, 1.44, -1.44, 1.80, -1.80, 2.20, -2.20, 2.65, -2.65
-        ]
 
         for device in limited {
             let baseR = normalizedRadius(forMeters: device.estimatedDistanceMeters) * maxRadius
@@ -482,9 +505,9 @@ struct BLERadarView: View {
             )
             var chosenAngle = baseAngle
 
-            outer: for rShift in [CGFloat(0), CGFloat(10), CGFloat(-10), CGFloat(20), CGFloat(-18)] {
+            outer: for rShift in layoutRadiusShifts {
                 let candidateR = min(max(baseR + rShift, maxRadius * 0.14), maxRadius * 0.93)
-                for offset in angleOffsets {
+                for offset in layoutAngleOffsets {
                     let candidateAngle = baseAngle + offset
                     let candidate = CGPoint(
                         x: center.x + candidateR * CGFloat(cos(candidateAngle)),
@@ -505,7 +528,12 @@ struct BLERadarView: View {
                 PositionedBlip(
                     device: device,
                     point: chosenPoint,
-                    angleDeg: chosenAngle * 180.0 / .pi
+                    angleDeg: chosenAngle * 180.0 / .pi,
+                    positionKey: BlipPositionKey(
+                        id: device.id,
+                        qx: Int(chosenPoint.x.rounded()),
+                        qy: Int(chosenPoint.y.rounded())
+                    )
                 )
             )
         }

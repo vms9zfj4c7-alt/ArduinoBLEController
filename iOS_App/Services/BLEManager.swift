@@ -384,6 +384,7 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     func setManualBoardOverride(_ boardType: ArduinoBoardType) {
+        guard manualBoardOverride != boardType else { return }
         manualBoardOverride = boardType
         let resolvedCap: ArduinoBoardCapability
         if boardType == .auto {
@@ -494,8 +495,18 @@ final class BLEManager: NSObject, ObservableObject {
             }
             return lhs.rssi > rhs.rssi
         }
-        if discoveredDevices != sorted {
-            discoveredDevices = sorted
+        let capped: [BLEDevice]
+        if sorted.count > 60 {
+            for evicted in sorted.dropFirst(60) {
+                devicesByID.removeValue(forKey: evicted.id)
+                lastSeenTimestamps.removeValue(forKey: evicted.id)
+            }
+            capped = Array(sorted.prefix(60))
+        } else {
+            capped = sorted
+        }
+        if discoveredDevices != capped {
+            discoveredDevices = capped
         }
     }
 
@@ -672,23 +683,28 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     private func parseTelemetryLine(_ line: String) {
-        let body = line.dropFirst("DATA:".count)
-        for part in body.split(separator: ";") {
-            let kv = part.split(separator: "=", maxSplits: 1)
-            guard kv.count == 2 else { continue }
-            let key = kv[0].trimmingCharacters(in: .whitespaces)
-            let val = kv[1].trimmingCharacters(in: .whitespaces)
+        var cursor = line.index(line.startIndex, offsetBy: 5) // Après "DATA:"
+        while cursor < line.endIndex {
+            let nextSemi = line[cursor...].firstIndex(of: ";") ?? line.endIndex
+            let part = line[cursor ..< nextSemi]
+            if let eqIdx = part.firstIndex(of: "=") {
+                let rawKey = part[..<eqIdx]
+                let rawVal = part[part.index(after: eqIdx)...]
+                let key = rawKey.trimmingCharacters(in: .whitespaces)
+                let val = rawVal.trimmingCharacters(in: .whitespaces)
 
-            if (key == "T" || key.caseInsensitiveCompare("TEMP") == .orderedSame), let temp = Double(val) {
-                if telemetryStore.latestTemperature != temp {
-                    telemetryStore.latestTemperature = temp
-                }
-            } else if key == "S" || key.caseInsensitiveCompare("SIM") == .orderedSame {
-                let sim = (val == "1" || val.caseInsensitiveCompare("true") == .orderedSame)
-                if telemetryStore.isTemperatureSimulated != sim {
-                    telemetryStore.isTemperatureSimulated = sim
+                if key == "T" || key.caseInsensitiveCompare("TEMP") == .orderedSame {
+                    if let temp = Double(val), telemetryStore.latestTemperature != temp {
+                        telemetryStore.latestTemperature = temp
+                    }
+                } else if key == "S" || key.caseInsensitiveCompare("SIM") == .orderedSame {
+                    let sim = (val == "1" || val.caseInsensitiveCompare("true") == .orderedSame)
+                    if telemetryStore.isTemperatureSimulated != sim {
+                        telemetryStore.isTemperatureSimulated = sim
+                    }
                 }
             }
+            cursor = (nextSemi < line.endIndex) ? line.index(after: nextSemi) : line.endIndex
         }
     }
 }
@@ -730,13 +746,23 @@ extension BLEManager: CBCentralManagerDelegate {
         lastSeenTimestamps[peripheral.identifier] = now
         let existing = devicesByID[peripheral.identifier]
 
-        // Fusionner les paquets ADV_IND (UUIDs) et SCAN_RSP (LocalName) sans écraser les infos déjà reçues
-        let packetLocalName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let peripheralName = peripheral.name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mergedName: String? = (packetLocalName?.isEmpty == false ? packetLocalName : nil)
-            ?? (peripheralName?.isEmpty == false ? peripheralName : nil)
-            ?? existing?.rawName
+        // Fusionner ADV_IND et SCAN_RSP sans allouer inutilement sur les paquets répétés
+        let rawPacketName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        let rawPeripheralName = peripheral.name
+        let mergedName: String?
+        if let rawPacketName, rawPacketName == existing?.rawName {
+            mergedName = existing?.rawName
+        } else {
+            let trimmedPacket = rawPacketName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmedPacket, !trimmedPacket.isEmpty {
+                mergedName = trimmedPacket
+            } else if let rawPeripheralName, rawPeripheralName == existing?.rawName {
+                mergedName = existing?.rawName
+            } else {
+                let trimmedPeripheral = rawPeripheralName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                mergedName = (trimmedPeripheral?.isEmpty == false ? trimmedPeripheral : nil) ?? existing?.rawName
+            }
+        }
 
         let primaryUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]
         let overflowUUIDs = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID]
