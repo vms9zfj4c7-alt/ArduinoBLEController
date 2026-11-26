@@ -21,6 +21,7 @@ jobs:
 
       - name: Build unsigned iOS app
         run: |
+          set -o pipefail
           xcodebuild \
             -project ArduinoBLEController.xcodeproj \
             -scheme ArduinoBLEController \
@@ -31,7 +32,14 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            clean build
+            clean build | tee xcodebuild.log
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-failure-log
+          path: xcodebuild.log
 
       - name: Package unsigned IPA
         run: |

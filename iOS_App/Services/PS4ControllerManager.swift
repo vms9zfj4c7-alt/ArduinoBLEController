@@ -97,7 +97,7 @@ final class PS4ControllerManager: ObservableObject {
     /// Synchronise la barre lumineuse LED de la DualShock 4 avec l'état BLE de l'Arduino.
     func updateLightbar(for bleState: BLEManager.ConnectionState) {
         lastLightbarState = bleState
-        guard let light = activeController?.lightbar else { return }
+        guard let light = activeController?.light else { return }
 
         switch bleState {
         case .connected:
