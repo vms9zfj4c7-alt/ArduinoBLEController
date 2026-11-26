@@ -1,56 +1,84 @@
 import Foundation
 import CoreBluetooth
 
-/// Représente un périphérique BLE découvert lors du scan (métadonnées précalculées pour tri/affichage rapide).
+/// Représente un périphérique BLE découvert lors du scan, en fusionnant les paquets ADV_IND et SCAN_RSP.
 struct BLEDevice: Identifiable, Equatable {
     let id: UUID
-    let name: String
+    let rawName: String?
     let rssi: Int
     let advertisedServiceUUIDs: [CBUUID]
+    let manufacturerID: UInt16?
+    let manufacturerName: String?
+    let isConnectable: Bool
     let lastSeen: Date
+
+    let hasResolvedName: Bool
+    let displayName: String
     let isLikelyArduino: Bool
     let detectedModuleHint: String
 
     private static let arduinoKeywords = [
-        "ARDUINO", "ESP32", "HM-10", "HMSOFT", "BT05", "MLT-BT05", "NANO", "UNO", "JDY", "BLE"
+        "ARDUINO", "ESP32", "HM-10", "HM10", "HMSOFT", "BT05", "MLT-BT05",
+        "AT-09", "HC-08", "JDY", "DSD", "SH-HC", "CC254", "NANO", "UNO", "MEGA", "ROBOT"
     ]
 
     init(
         id: UUID,
-        name: String,
+        rawName: String?,
         rssi: Int,
         advertisedServiceUUIDs: [CBUUID],
+        manufacturerData: Data? = nil,
+        manufacturerID: UInt16? = nil,
+        isConnectable: Bool = true,
         lastSeen: Date
     ) {
+        let trimmedName = rawName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanName = (trimmedName?.isEmpty == false) ? trimmedName : nil
+
+        let resolvedMfrID: UInt16?
+        if let mfrData = manufacturerData, mfrData.count >= 2 {
+            resolvedMfrID = UInt16(mfrData[mfrData.startIndex]) | (UInt16(mfrData[mfrData.startIndex + 1]) << 8)
+        } else {
+            resolvedMfrID = manufacturerID
+        }
+
+        let mfrName = resolvedMfrID.flatMap { Self.manufacturerDisplayName(for: $0) }
+
         self.id = id
-        self.name = name
+        self.rawName = cleanName
         self.rssi = rssi
         self.advertisedServiceUUIDs = advertisedServiceUUIDs
+        self.manufacturerID = resolvedMfrID
+        self.manufacturerName = mfrName
+        self.isConnectable = isConnectable
         self.lastSeen = lastSeen
+        self.hasResolvedName = (cleanName != nil)
 
-        let upper = name.uppercased()
+        let upper = cleanName?.uppercased() ?? ""
         let hasKnownUUID = advertisedServiceUUIDs.contains { uuid in
             BLEProtocolConstants.knownArduinoServiceUUIDs.contains(uuid)
         }
-        self.isLikelyArduino = hasKnownUUID || Self.arduinoKeywords.contains { upper.contains($0) }
+        let hasKeyword = !upper.isEmpty && Self.arduinoKeywords.contains { upper.contains($0) }
+        let hasArduinoSilicon = isConnectable && (resolvedMfrID == 0x02E5 || resolvedMfrID == 0x000D)
 
-        if advertisedServiceUUIDs.contains(BLEProtocolConstants.customServiceUUID) {
-            self.detectedModuleHint = "Arduino / ESP32 (BLE)"
-        } else if advertisedServiceUUIDs.contains(BLEProtocolConstants.hm10ServiceUUID) {
-            self.detectedModuleHint = "Module HM-10 / Série"
-        } else if advertisedServiceUUIDs.contains(BLEProtocolConstants.nordicServiceUUID) {
-            self.detectedModuleHint = "Nordic UART"
-        } else if upper.contains("ESP32") {
-            self.detectedModuleHint = "ESP32"
-        } else if upper.contains("R4") {
-            self.detectedModuleHint = "Uno R4 WiFi"
-        } else if upper.contains("NANO") {
-            self.detectedModuleHint = "Arduino Nano"
-        } else if upper.contains("HM") || upper.contains("BT05") {
-            self.detectedModuleHint = "Module série BLE"
+        self.isLikelyArduino = hasKnownUUID || hasKeyword || hasArduinoSilicon
+
+        if let cleanName {
+            self.displayName = cleanName
+        } else if hasKnownUUID {
+            self.displayName = "Module Arduino / BLE"
+        } else if let mfrName {
+            self.displayName = "Appareil \(mfrName)"
         } else {
-            self.detectedModuleHint = "Périphérique BLE"
+            self.displayName = "Appareil BLE (\(id.uuidString.prefix(4)))"
         }
+
+        self.detectedModuleHint = Self.buildHint(
+            upperName: upper,
+            serviceUUIDs: advertisedServiceUUIDs,
+            manufacturerName: mfrName,
+            isConnectable: isConnectable
+        )
     }
 
     var signalBars: Int {
@@ -68,6 +96,58 @@ struct BLEDevice: Identifiable, Equatable {
         case 3: return "Bon"
         case 2: return "Moyen"
         default: return "Faible"
+        }
+    }
+
+    private static func buildHint(
+        upperName: String,
+        serviceUUIDs: [CBUUID],
+        manufacturerName: String?,
+        isConnectable: Bool
+    ) -> String {
+        if serviceUUIDs.contains(BLEProtocolConstants.customServiceUUID) {
+            return "Arduino / ESP32 (BLE)"
+        }
+        if serviceUUIDs.contains(BLEProtocolConstants.hm10ServiceUUID) {
+            return "Module HM-10 / Série (FFE0)"
+        }
+        if serviceUUIDs.contains(BLEProtocolConstants.nordicServiceUUID) {
+            return "Nordic UART (NUS)"
+        }
+        if upperName.contains("ESP32") { return "ESP32" }
+        if upperName.contains("R4") { return "Arduino Uno R4 WiFi" }
+        if upperName.contains("NANO") { return "Arduino Nano" }
+        if upperName.contains("HM") || upperName.contains("BT05") || upperName.contains("JDY") {
+            return "Module série BLE"
+        }
+        if let mfr = manufacturerName {
+            return isConnectable ? "\(mfr) • Connectable" : "\(mfr) • Balise"
+        }
+        if !serviceUUIDs.isEmpty {
+            let shortList = serviceUUIDs.prefix(2).map { $0.uuidString }.joined(separator: ", ")
+            return "Services : \(shortList)"
+        }
+        return isConnectable ? "Bluetooth Low Energy" : "Balise non connectable"
+    }
+
+    private static func manufacturerDisplayName(for companyID: UInt16) -> String? {
+        switch companyID {
+        case 0x004C: return "Apple"
+        case 0x0006: return "Microsoft"
+        case 0x0075: return "Samsung"
+        case 0x00E0: return "Google"
+        case 0x02E5: return "Espressif (ESP32)"
+        case 0x0059: return "Nordic"
+        case 0x000D: return "Texas Instruments / HM-10"
+        case 0x012D: return "Sony"
+        case 0x038F: return "Xiaomi"
+        case 0x0087: return "Garmin"
+        case 0x009E: return "Bose"
+        case 0x0157: return "Huawei"
+        case 0x000A: return "Qualcomm"
+        case 0x005D: return "Realtek"
+        case 0x00D2: return "Dialog"
+        default: return nil
         }
     }
 }

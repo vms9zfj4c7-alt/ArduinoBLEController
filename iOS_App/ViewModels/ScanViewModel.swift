@@ -5,6 +5,7 @@ import Combine
 /// ViewModel gérant l'écran de scan et de connexion aux cartes Arduino BLE.
 final class ScanViewModel: ObservableObject {
     @Published var showOnlyArduinoDevices: Bool = false
+    @Published var hideUnnamedBeacons: Bool = true
     @Published var searchText: String = ""
 
     @Published private(set) var filteredDevices: [BLEDevice] = []
@@ -18,23 +19,26 @@ final class ScanViewModel: ObservableObject {
     init(bleManager: BLEManager) {
         self.bleManager = bleManager
 
-        Publishers.CombineLatest3(
+        Publishers.CombineLatest4(
             bleManager.$discoveredDevices,
             $showOnlyArduinoDevices,
+            $hideUnnamedBeacons,
             $searchText
         )
-        .map { devices, onlyArduino, rawQuery in
+        .map { devices, onlyArduino, hideUnnamed, rawQuery in
             let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !onlyArduino && query.isEmpty {
-                return devices
-            }
             return devices.filter { device in
                 if onlyArduino && !device.isLikelyArduino {
                     return false
                 }
+                if hideUnnamed && !device.hasResolvedName && !device.isLikelyArduino {
+                    // Masquer les balises anonymes (Apple Continuity, AirTag, etc.) sans nom
+                    return false
+                }
                 if query.isEmpty { return true }
-                return device.name.localizedCaseInsensitiveContains(query)
+                return device.displayName.localizedCaseInsensitiveContains(query)
                     || device.detectedModuleHint.localizedCaseInsensitiveContains(query)
+                    || (device.manufacturerName?.localizedCaseInsensitiveContains(query) ?? false)
             }
         }
         .receive(on: DispatchQueue.main)

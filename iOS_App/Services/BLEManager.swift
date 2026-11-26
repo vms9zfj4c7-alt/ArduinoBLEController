@@ -120,6 +120,28 @@ final class BLEManager: NSObject, ObservableObject {
         connectionState = .scanning
         appendLog(.info, "Démarrage du scan BLE...")
 
+        // Inclure aussi les cartes déjà connectées au niveau iOS
+        let alreadyConnected = centralManager.retrieveConnectedPeripherals(
+            withServices: BLEProtocolConstants.knownArduinoServiceUUIDs
+        )
+        let now = Date()
+        for peripheral in alreadyConnected {
+            peripheralsByID[peripheral.identifier] = peripheral
+            let device = BLEDevice(
+                id: peripheral.identifier,
+                rawName: peripheral.name,
+                rssi: -50,
+                advertisedServiceUUIDs: BLEProtocolConstants.knownArduinoServiceUUIDs,
+                isConnectable: true,
+                lastSeen: now
+            )
+            devicesByID[peripheral.identifier] = device
+            scanDevicesDirty = true
+        }
+        if scanDevicesDirty {
+            flushScanUpdatesIfNeeded()
+        }
+
         centralManager.scanForPeripherals(
             withServices: nil,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
@@ -165,7 +187,7 @@ final class BLEManager: NSObject, ObservableObject {
             return
         }
 
-        connect(toPeripheral: peripheral, displayName: device.name)
+        connect(toPeripheral: peripheral, displayName: device.displayName)
     }
 
     /// Reconnexion rapide sans repasser par l'écran de scan via l'UUID mémorisé.
@@ -408,6 +430,12 @@ final class BLEManager: NSObject, ObservableObject {
             if lhs.isLikelyArduino != rhs.isLikelyArduino {
                 return lhs.isLikelyArduino && !rhs.isLikelyArduino
             }
+            if lhs.isConnectable != rhs.isConnectable {
+                return lhs.isConnectable && !rhs.isConnectable
+            }
+            if lhs.hasResolvedName != rhs.hasResolvedName {
+                return lhs.hasResolvedName && !rhs.hasResolvedName
+            }
             return lhs.rssi > rhs.rssi
         }
     }
@@ -484,8 +512,9 @@ final class BLEManager: NSObject, ObservableObject {
         self.activeProfileDescription = profileLabel
 
         if manualBoardOverride == .auto {
+            let bestName = peripheral.name ?? devicesByID[peripheral.identifier]?.displayName ?? ""
             let inferred = ArduinoBoardCapability.inferFromDeviceMetadata(
-                name: peripheral.name ?? "",
+                name: bestName,
                 serviceUUIDStrings: discoveredServiceUUIDStrings
             )
             let cap = ArduinoBoardCapability.defaultCapability(for: inferred, isAutoDetected: true)
@@ -504,7 +533,9 @@ final class BLEManager: NSObject, ObservableObject {
     private func markAsConnected(peripheral: CBPeripheral) {
         connectionTimeoutTimer?.invalidate()
         connectionTimeoutTimer = nil
-        let displayName = peripheral.name ?? "Arduino BLE"
+        let displayName = peripheral.name
+            ?? devicesByID[peripheral.identifier]?.displayName
+            ?? "Arduino BLE"
         connectionState = .connected(displayName)
         lastConnectedDeviceName = displayName
         UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: lastDeviceIDKey)
@@ -619,13 +650,40 @@ extension BLEManager: CBCentralManagerDelegate {
         let rssiValue = RSSI.intValue
         // Ignorer les lectures RSSI invalides (127 indique indisponible dans CoreBluetooth)
         let normalizedRSSI = (rssiValue == 127) ? -99 : rssiValue
-        let advertisedName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
-            ?? peripheral.name
-            ?? "Appareil BLE sans nom"
-        let serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
 
         peripheralsByID[peripheral.identifier] = peripheral
         let existing = devicesByID[peripheral.identifier]
+
+        // Fusionner les paquets ADV_IND (UUIDs) et SCAN_RSP (LocalName) sans écraser les infos déjà reçues
+        let packetLocalName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let peripheralName = peripheral.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mergedName: String? = (packetLocalName?.isEmpty == false ? packetLocalName : nil)
+            ?? (peripheralName?.isEmpty == false ? peripheralName : nil)
+            ?? existing?.rawName
+
+        var mergedUUIDSet = Set(existing?.advertisedServiceUUIDs ?? [])
+        if let primaryUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
+            mergedUUIDSet.formUnion(primaryUUIDs)
+        }
+        if let overflowUUIDs = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] {
+            mergedUUIDSet.formUnion(overflowUUIDs)
+        }
+        if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] {
+            mergedUUIDSet.formUnion(serviceData.keys)
+        }
+        let mergedUUIDs = Array(mergedUUIDSet).sorted { $0.uuidString < $1.uuidString }
+
+        let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        let connectableFlag: Bool
+        if let rawBool = advertisementData[CBAdvertisementDataIsConnectable] as? Bool {
+            connectableFlag = rawBool
+        } else if let rawNum = advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber {
+            connectableFlag = rawNum.boolValue
+        } else {
+            connectableFlag = existing?.isConnectable ?? true
+        }
+
         let smoothedRSSI: Int
         if let prev = existing?.rssi {
             smoothedRSSI = Int((Double(prev) * 0.6 + Double(normalizedRSSI) * 0.4).rounded())
@@ -635,23 +693,33 @@ extension BLEManager: CBCentralManagerDelegate {
 
         let updatedDevice = BLEDevice(
             id: peripheral.identifier,
-            name: advertisedName,
+            rawName: mergedName,
             rssi: smoothedRSSI,
-            advertisedServiceUUIDs: serviceUUIDs,
+            advertisedServiceUUIDs: mergedUUIDs,
+            manufacturerData: manufacturerData,
+            manufacturerID: existing?.manufacturerID,
+            isConnectable: connectableFlag,
             lastSeen: Date()
         )
         devicesByID[peripheral.identifier] = updatedDevice
 
-        if existing == nil {
+        let resolvedNewName = !(existing?.hasResolvedName ?? false) && updatedDevice.hasResolvedName
+        let resolvedNewArduino = !(existing?.isLikelyArduino ?? false) && updatedDevice.isLikelyArduino
+
+        if existing == nil || resolvedNewName || resolvedNewArduino {
             scanDevicesDirty = true
             flushScanUpdatesIfNeeded()
-        } else if abs((existing?.rssi ?? smoothedRSSI) - smoothedRSSI) >= 2 || existing?.name != advertisedName {
+        } else if abs((existing?.rssi ?? smoothedRSSI) - smoothedRSSI) >= 2
+                    || existing?.displayName != updatedDevice.displayName
+                    || existing?.advertisedServiceUUIDs.count != updatedDevice.advertisedServiceUUIDs.count {
             scanDevicesDirty = true
         }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        let name = peripheral.name ?? "Arduino BLE"
+        let name = peripheral.name
+            ?? devicesByID[peripheral.identifier]?.displayName
+            ?? "Arduino BLE"
         connectionState = .discoveringServices(name)
         appendLog(.info, "Connecté à \(name). Découverte des services...")
         peripheral.delegate = self

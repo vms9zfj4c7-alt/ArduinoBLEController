@@ -13,6 +13,7 @@ struct ScanView: View {
 
                 List {
                     Section {
+                        Toggle("Masquer les balises sans nom", isOn: $viewModel.hideUnnamedBeacons)
                         Toggle("Afficher uniquement les cartes Arduino / BLE", isOn: $viewModel.showOnlyArduinoDevices)
 
                         if case .disconnected = viewModel.connectionState,
@@ -178,7 +179,7 @@ struct ScanView: View {
     private func isConnecting(to device: BLEDevice) -> Bool {
         switch viewModel.connectionState {
         case .connecting(let name), .discoveringServices(let name):
-            return name == device.name
+            return name == device.displayName
         default:
             return false
         }
@@ -204,7 +205,7 @@ private struct DeviceRowView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(device.name)
+                        Text(device.displayName)
                             .font(.body.weight(.semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
